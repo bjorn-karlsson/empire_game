@@ -479,3 +479,5 @@ std::vector<Army*> CampaignMap::GetArmiesInProvince(int pid){std::vector<Army*>r
 Province* CampaignMap::GetProvinceAtWorldPos(const glm::vec3&w){glm::vec2 pt(w.x,w.z);for(auto&p:m_provinces)if(PtInPoly(pt,p.borderVertices))return&p;return nullptr;}
 void CampaignMap::MoveArmy(int id,int tgt){Province*p=GetProvince(tgt);if(p){m_selectedArmyId=id;HandleRightClick(p->cityPos);}}
 void CampaignMap::RecruitUnit(int,UnitType){}
+BattleSetupData CampaignMap::GetPendingBattle() { return m_pendingBattle.value(); }
+void CampaignMap::ApplyBattleResult(const BattleResult&) { m_pendingBattle.reset(); }

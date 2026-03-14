@@ -31,13 +31,10 @@ void TurnManager::EndTurn()
 
 void TurnManager::ProcessAITurns()
 {
-    // TODO: AI decision making
-    // For each non-player faction:
-    //   - Evaluate threats (enemy armies near borders)
-    //   - Move armies toward objectives
-    //   - Build infrastructure in provinces
-    //   - Declare war / seek alliances based on opinion scores
-    Logger::Info("  AI turns processing... (not yet implemented)");
+    if (m_map) {
+        m_map->RunAI();
+    }
+    Logger::Info("  AI turns complete");
 }
 
 void TurnManager::ProcessEconomy()

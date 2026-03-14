@@ -41,6 +41,9 @@ void Renderer::BuildMapGeometry(const CampaignMap&map){
     for(const auto&p:map.GetProvinces())BuildProvinceGPU(p);
     for(const auto&ob:map.GetObstacles())BuildObstacleGPU(ob);
 }
+void Renderer::RebuildProvinceColors(const CampaignMap&){
+    // Colors are sent as uniforms each frame — no GPU rebuild needed
+}
 
 void Renderer::BuildProvinceGPU(const Province&prov){
     if(prov.borderVertices.size()<3)return;
@@ -163,6 +166,22 @@ void Renderer::InitShaders(){
     void main(){gl_Position=u_VP*u_Model*vec4(aPos,1);})",
     R"(#version 330 core
     uniform vec4 u_Color;out vec4 FC;void main(){FC=u_Color;})");
+
+    // Screen-space HUD shader (NDC coordinates: -1 to 1)
+    m_screenShader=std::make_unique<Shader>();
+    m_screenShader->LoadFromSource(
+    R"(#version 330 core
+    layout(location=0)in vec2 aPos;
+    uniform vec4 u_Rect;
+    uniform vec4 u_Screen;
+    void main(){
+        vec2 p = aPos * u_Rect.zw + u_Rect.xy;
+        vec2 ndc = (p / u_Screen.xy) * 2.0 - 1.0;
+        ndc.y = -ndc.y;
+        gl_Position = vec4(ndc, 0, 1);
+    })",
+    R"(#version 330 core
+    uniform vec4 u_Color;out vec4 FC;void main(){FC=u_Color;})");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -181,6 +200,10 @@ void Renderer::RenderCampaignMap(const CampaignMap&map){
     RenderMovementMesh(map);RenderPathArrows(map);
     RenderCities(map);RenderArmies(map);RenderSelectionCircle(map);
     glStencilMask(0xFF);
+
+    // HUD (2D overlay, after all 3D)
+    RenderHUD(map);
+    RenderNotification(map);
 }
 
 void Renderer::RenderWater(){
@@ -256,7 +279,6 @@ void Renderer::RenderPathArrows(const CampaignMap&map){
     int sel=map.GetSelectedArmyId();if(sel<0)return;
     const Army*a=map.GetArmy(sel);if(!a||a->fullPath.size()<2)return;
 
-    // Turn colors: green, red, blue, yellow, purple
     glm::vec4 turnColors[]={
         {0.2f,0.85f,0.3f,1.0f},  // green - this turn
         {0.9f,0.2f,0.2f,1.0f},   // red - turn 2
@@ -264,40 +286,68 @@ void Renderer::RenderPathArrows(const CampaignMap&map){
         {0.95f,0.85f,0.2f,1.0f}, // yellow - turn 4
         {0.7f,0.3f,0.9f,1.0f},   // purple - turn 5+
     };
+    int numColors=(int)(sizeof(turnColors)/sizeof(turnColors[0]));
 
     m_overlayShader->Use();m_overlayShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
     m_overlayShader->SetMat4("u_Model",glm::mat4(1.0f));
 
-    // Calculate cumulative distances along path
-    std::vector<float>cumDist(a->fullPath.size(),0);
-    for(int i=1;i<(int)a->fullPath.size();i++){
+    // Build cumulative distance table
+    int pathLen=(int)a->fullPath.size();
+    std::vector<float>cumDist(pathLen,0);
+    for(int i=1;i<pathLen;i++)
         cumDist[i]=cumDist[i-1]+glm::distance(
             glm::vec2(a->fullPath[i].x,a->fullPath[i].z),
             glm::vec2(a->fullPath[i-1].x,a->fullPath[i-1].z));
-    }
 
-    // Draw path segments colored by turn
-    float pathY=0.06f;
+    // Helper: interpolate a point along the path at a given cumulative distance
+    auto interpAtDist=[&](float d)->glm::vec3{
+        if(d<=0)return a->fullPath[0];
+        if(d>=cumDist.back())return a->fullPath.back();
+        for(int i=1;i<pathLen;i++){
+            if(cumDist[i]>=d){
+                float segLen=cumDist[i]-cumDist[i-1];
+                float t=(segLen>0.001f)?(d-cumDist[i-1])/segLen:0;
+                return glm::mix(a->fullPath[i-1],a->fullPath[i],t);
+            }
+        }
+        return a->fullPath.back();
+    };
+
+    float pathY=0.07f;
+
+    // Draw each turn's segment
     for(int turn=0;turn<(int)a->turnBreaks.size();turn++){
-        float segStart=(turn==0)?a->distanceTraveled:a->turnBreaks[turn-1];
+        float segStart=(turn==0)?a->distanceTraveled:a->turnBreaks[std::max(0,turn-1)];
         float segEnd=a->turnBreaks[turn];
+        if(segEnd<=segStart+0.01f)continue;
 
-        // Collect points in this turn's segment
+        // Collect points: start interpolated point + all waypoints in range + end interpolated point
         std::vector<float>segVerts;
-        for(int i=0;i<(int)a->fullPath.size();i++){
-            if(cumDist[i]>=segStart&&cumDist[i]<=segEnd+0.01f){
+
+        // Start point (interpolated at segStart)
+        glm::vec3 startPt=interpAtDist(segStart);
+        segVerts.insert(segVerts.end(),{startPt.x,pathY,startPt.z});
+
+        // All path waypoints strictly between segStart and segEnd
+        for(int i=0;i<pathLen;i++){
+            if(cumDist[i]>segStart+0.01f && cumDist[i]<segEnd-0.01f){
                 segVerts.insert(segVerts.end(),{a->fullPath[i].x,pathY,a->fullPath[i].z});
             }
         }
-        if(segVerts.size()<6)continue; // need at least 2 points
+
+        // End point (interpolated at segEnd)
+        glm::vec3 endPt=interpAtDist(segEnd);
+        segVerts.insert(segVerts.end(),{endPt.x,pathY,endPt.z});
+
+        if(segVerts.size()<6)continue; // need at least 2 points (6 floats)
 
         glBindVertexArray(m_pathVAO);glBindBuffer(GL_ARRAY_BUFFER,m_pathVBO);
         glBufferData(GL_ARRAY_BUFFER,segVerts.size()*sizeof(float),segVerts.data(),GL_DYNAMIC_DRAW);
         glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
 
-        int colorIdx=std::min(turn,(int)(sizeof(turnColors)/sizeof(turnColors[0]))-1);
-        m_overlayShader->SetVec4("u_Color",turnColors[colorIdx]);
-        glLineWidth(turn==0?4.0f:3.0f);
+        int ci=std::min(turn,numColors-1);
+        m_overlayShader->SetVec4("u_Color",turnColors[ci]);
+        glLineWidth(turn==0?5.0f:3.5f);
         glDrawArrays(GL_LINE_STRIP,0,(int)segVerts.size()/3);
     }
     glBindVertexArray(0);glLineWidth(1);
@@ -336,6 +386,172 @@ void Renderer::RenderSelectionCircle(const CampaignMap&map){
     m_overlayShader->SetVec4("u_Color",{0.2f,0.9f,0.3f,1.0f});
     glLineWidth(3);glBindVertexArray(m_circleVAO);glDrawArrays(GL_LINE_STRIP,0,m_circleVerts);
     glBindVertexArray(0);glLineWidth(1);
+}
+
+// ── Draw a 2D screen-space quad ───────────────────────────────
+void Renderer::DrawScreenQuad(float x,float y,float w,float h,glm::vec4 color){
+    float quad[]={0,0, 1,0, 1,1, 0,0, 1,1, 0,1};
+
+    unsigned int vao,vbo;
+    glGenVertexArrays(1,&vao);glGenBuffers(1,&vbo);
+    glBindVertexArray(vao);glBindBuffer(GL_ARRAY_BUFFER,vbo);
+    glBufferData(GL_ARRAY_BUFFER,sizeof(quad),quad,GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,2*sizeof(float),(void*)0);
+    glEnableVertexAttribArray(0);
+
+    m_screenShader->Use();
+    m_screenShader->SetVec4("u_Rect",{x,y,w,h});
+    m_screenShader->SetVec4("u_Color",color);
+    m_screenShader->SetVec4("u_Screen",{(float)m_width,(float)m_height,0,0});
+    // u_Screen is vec2 but SetVec4 works (extra components ignored in shader)
+
+    glDrawArrays(GL_TRIANGLES,0,6);
+    glBindVertexArray(0);
+    glDeleteVertexArrays(1,&vao);glDeleteBuffers(1,&vbo);
+}
+
+// ── HUD ───────────────────────────────────────────────────────
+void Renderer::RenderHUD(const CampaignMap&map){
+    glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
+
+    float sw=(float)m_width, sh=(float)m_height;
+
+    // Top bar background
+    DrawScreenQuad(0,0,sw,36,{0.05f,0.05f,0.1f,0.85f});
+
+    // Turn indicator: colored blocks for season
+    // Spring=green, Summer=yellow, Autumn=orange, Winter=white
+    glm::vec4 seasonColors[]={{0.3f,0.7f,0.3f,1},{0.9f,0.8f,0.2f,1},{0.8f,0.5f,0.2f,1},{0.8f,0.85f,0.9f,1}};
+    int season=(map.GetCurrentTurn()-1)%4;
+    DrawScreenQuad(10,6,24,24,seasonColors[season]);
+
+    // Turn number as small blocks (each block = 1 turn, max 20 visible)
+    int turn=map.GetCurrentTurn();
+    for(int i=0;i<std::min(turn,20);i++){
+        float tx=44+i*8;
+        DrawScreenQuad(tx,12,6,12,{0.6f,0.6f,0.7f,0.8f});
+    }
+
+    // Treasury bar (gold)
+    const Faction*player=map.GetPlayerFaction();
+    if(player){
+        float maxTreasury=20000.0f;
+        float treasuryRatio=glm::clamp((float)player->treasury/maxTreasury,0.0f,1.0f);
+        float barX=sw-260;
+        DrawScreenQuad(barX,8,200,20,{0.15f,0.12f,0.08f,0.8f}); // bg
+        DrawScreenQuad(barX,8,200*treasuryRatio,20,{0.85f,0.7f,0.15f,0.9f}); // gold fill
+
+        // Income indicator (green/red bar below treasury)
+        int net=player->incomePerTurn-player->expensesPerTurn;
+        float netRatio=glm::clamp(std::abs((float)net)/500.0f,0.0f,1.0f);
+        glm::vec4 netColor=net>=0?glm::vec4(0.2f,0.7f,0.2f,0.8f):glm::vec4(0.8f,0.2f,0.2f,0.8f);
+        DrawScreenQuad(barX,30,200*netRatio,4,netColor);
+    }
+
+    // End Turn button (bottom right)
+    float btnW=100,btnH=30;
+    float btnX=sw-btnW-10,btnY=sh-btnH-10;
+    DrawScreenQuad(btnX,btnY,btnW,btnH,{0.15f,0.4f,0.15f,0.85f}); // green button
+    DrawScreenQuad(btnX+2,btnY+2,btnW-4,btnH-4,{0.2f,0.55f,0.2f,0.9f}); // lighter inner
+
+    // Selected army info (bottom left panel)
+    int selArmy=map.GetSelectedArmyId();
+    if(selArmy>=0){
+        const Army*a=map.GetArmy(selArmy);
+        if(a){
+            float panelW=280,panelH=80;
+            DrawScreenQuad(0,sh-panelH,panelW,panelH,{0.05f,0.05f,0.1f,0.85f});
+
+            // Faction color stripe
+            const Faction*f=map.GetFaction(a->factionId);
+            glm::vec3 fc=f?f->color:glm::vec3(0.5f);
+            DrawScreenQuad(0,sh-panelH,6,panelH,{fc.r,fc.g,fc.b,1});
+
+            // Unit count bars (each unit = small rectangle)
+            for(int i=0;i<(int)a->units.size();i++){
+                float ux=14+i*12;
+                float uy=sh-panelH+10;
+                // Bar height based on manpower ratio
+                float hpRatio=(float)a->units[i].stats.manpower/a->units[i].stats.maxManpower;
+                float barH=50*hpRatio;
+                // Color by unit type
+                glm::vec4 unitColor={0.5f,0.5f,0.6f,0.9f};
+                if(a->units[i].type==UnitType::LINE_INFANTRY) unitColor={0.3f,0.4f,0.8f,0.9f};
+                if(a->units[i].type==UnitType::GRENADIERS) unitColor={0.8f,0.3f,0.3f,0.9f};
+                if(a->units[i].type==UnitType::DRAGOONS||a->units[i].type==UnitType::HUSSARS) unitColor={0.3f,0.7f,0.3f,0.9f};
+                if(a->units[i].type==UnitType::CANNON_6PDR||a->units[i].type==UnitType::CANNON_12PDR) unitColor={0.7f,0.6f,0.3f,0.9f};
+
+                DrawScreenQuad(ux,uy+50-barH,10,barH,unitColor);
+                // Dark bg
+                DrawScreenQuad(ux,uy,10,50,{0.1f,0.1f,0.15f,0.5f});
+                DrawScreenQuad(ux,uy+50-barH,10,barH,unitColor);
+            }
+
+            // Movement range bar
+            float moveRatio=a->movementRange/a->movementRangeMax;
+            DrawScreenQuad(14,sh-18,250,8,{0.1f,0.1f,0.15f,0.6f});
+            DrawScreenQuad(14,sh-18,250*moveRatio,8,{0.2f,0.8f,0.3f,0.9f});
+        }
+    }
+
+    // Selected city info (bottom left, when city selected)
+    int selProv=map.GetSelectedProvinceId();
+    if(selProv>=0&&selArmy<0){
+        const Province*p=map.GetProvince(selProv);
+        if(p){
+            float panelW=200,panelH=60;
+            DrawScreenQuad(0,sh-panelH,panelW,panelH,{0.05f,0.05f,0.1f,0.85f});
+
+            // Income bar
+            float incRatio=glm::clamp(p->GetTotalIncome()/500.0f,0.0f,1.0f);
+            DrawScreenQuad(10,sh-panelH+10,180,12,{0.1f,0.1f,0.15f,0.5f});
+            DrawScreenQuad(10,sh-panelH+10,180*incRatio,12,{0.85f,0.7f,0.15f,0.9f});
+
+            // Public order bar
+            float orderRatio=p->publicOrder/100.0f;
+            glm::vec4 orderColor=orderRatio>0.5f?glm::vec4(0.2f,0.7f,0.2f,0.9f):glm::vec4(0.8f,0.3f,0.2f,0.9f);
+            DrawScreenQuad(10,sh-panelH+28,180,12,{0.1f,0.1f,0.15f,0.5f});
+            DrawScreenQuad(10,sh-panelH+28,180*orderRatio,12,orderColor);
+
+            // Building count indicators
+            for(int i=0;i<(int)p->buildings.size();i++){
+                DrawScreenQuad(10+i*20,sh-panelH+46,16,10,{0.5f,0.45f,0.35f,0.9f});
+            }
+        }
+    }
+
+    // Faction indicators (top right - shows who you're at war with)
+    for(int fi=0;fi<(int)map.GetFactions().size();fi++){
+        const auto&f=map.GetFactions()[fi];
+        if(f.isPlayerControlled)continue;
+        float fx=sw-40-fi*30,fy=6;
+        glm::vec4 fc={f.color.r,f.color.g,f.color.b,f.isEliminated?0.3f:0.9f};
+        DrawScreenQuad(fx,fy,24,24,fc);
+        // Red X if at war
+        if(!f.isEliminated&&player&&f.IsAtWarWith(player->id)){
+            DrawScreenQuad(fx+2,fy+10,20,4,{0.9f,0.15f,0.15f,0.9f}); // horizontal line
+            DrawScreenQuad(fx+10,fy+2,4,20,{0.9f,0.15f,0.15f,0.9f}); // vertical line (cross)
+        }
+    }
+
+    glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
+}
+
+// ── Notification banner ───────────────────────────────────────
+void Renderer::RenderNotification(const CampaignMap&map){
+    if(map.GetNotificationTimer()<=0)return;
+
+    glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
+    float sw=(float)m_width;
+    float alpha=glm::clamp(map.GetNotificationTimer(),0.0f,1.0f);
+
+    // Banner across top-center
+    float bannerW=400,bannerH=40;
+    float bx=(sw-bannerW)/2,by=50;
+    DrawScreenQuad(bx,by,bannerW,bannerH,{0.6f,0.15f,0.15f,0.85f*alpha});
+    DrawScreenQuad(bx+2,by+2,bannerW-4,bannerH-4,{0.75f,0.2f,0.2f,0.8f*alpha});
+
+    glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
 }
 
 void Renderer::RenderBattle(const BattleScene&){glClearColor(0.3f,0.15f,0.1f,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);glClearColor(0.05f,0.08f,0.15f,1);}

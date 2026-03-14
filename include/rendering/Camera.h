@@ -42,13 +42,13 @@ private:
     void RecalculateVectors();
 
     // Camera position and orientation
-    glm::vec3 m_position  = {0.0f, 20.0f, 8.0f};  // Above and slightly south
+    glm::vec3 m_position  = {0.0f, 12.0f, 12.0f};  // ETW-style angle
     glm::vec3 m_target    = {0.0f, 0.0f, 3.0f};    // Center of France
     glm::vec3 m_up        = {0.0f, 1.0f, 0.0f};
 
     // Orbit parameters
-    float m_distance    = 20.0f;   // Distance from target
-    float m_pitch       = -55.0f;  // Angle down from horizontal (degrees)
+    float m_distance    = 18.0f;   // Distance from target
+    float m_pitch       = -35.0f;  // Shallower angle like ETW
     float m_yaw         = 0.0f;    // Rotation around Y axis (degrees)
 
     // Zoom limits
@@ -65,13 +65,13 @@ private:
     float m_rotateSpeed = 60.0f;
 
     // Smooth interpolation targets
-    float m_targetDistance = 15.0f;
+    float m_targetDistance = 18.0f;
     float m_targetYaw     = 0.0f;
     glm::vec3 m_targetPosition = {0.0f, 0.0f, 0.0f};
 
     // Projection
     float m_aspectRatio = 16.0f / 9.0f;
-    float m_fov         = 45.0f;
+    float m_fov         = 50.0f;  // wider FOV for ETW-style perspective
     float m_nearPlane   = 0.1f;
     float m_farPlane    = 200.0f;
 };

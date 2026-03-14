@@ -16,6 +16,7 @@ public:
     Renderer(int w,int h);~Renderer();
     bool Init();
     void BuildMapGeometry(const CampaignMap&);
+    void RebuildProvinceColors(const CampaignMap&); // call after province capture
     void BeginFrame();void EndFrame();
     void RenderCampaignMap(const CampaignMap&);
     void RenderBattle(const BattleScene&);
@@ -37,10 +38,15 @@ private:
     void RenderCities(const CampaignMap&);
     void RenderArmies(const CampaignMap&);
     void RenderSelectionCircle(const CampaignMap&);
+    void RenderHUD(const CampaignMap&);
+    void RenderNotification(const CampaignMap&);
+
+    void DrawScreenQuad(float x,float y,float w,float h,glm::vec4 color);
 
     int m_width,m_height;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Shader> m_provinceShader,m_borderShader,m_waterShader,m_armyShader,m_overlayShader;
+    std::unique_ptr<Shader> m_screenShader; // 2D screen-space HUD
     std::unordered_map<int,ProvinceGPU> m_provinceGPUs;
     std::vector<ObstacleGPU> m_obstacleGPUs;
     unsigned int m_waterVAO=0,m_waterVBO=0;

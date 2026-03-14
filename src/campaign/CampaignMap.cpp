@@ -295,8 +295,63 @@ void CampaignMap::GenerateTestMap(){
     mkA("Chevalier de Belle-Isle",{5.5f,0,-1.5f},2,1,1,0);
     mkA("Duc de Villars",{4.5f,0,5.5f},2,0,1,0);
 
-    Logger::Info("France: %d provinces, %d obstacles, %d armies",
-        (int)m_provinces.size(),(int)m_obstacles.size(),(int)m_armies.size());
+    // ═══════════════════════════════════════════════════════════
+    // ENEMY FACTIONS — Surrounding powers at war with France
+    // ═══════════════════════════════════════════════════════════
+
+    // Spain — south, across the Pyrenees
+    {Faction f;f.id="spain";f.name="Spain";f.leaderName="Ferdinand VI";
+     f.color={0.85f,0.55f,0.15f};f.isPlayerControlled=false;f.treasury=8000;
+     f.relations.push_back({"france",DiplomaticStatus::WAR,  -80});
+     m_factions.push_back(f);}
+    // Add war from France side too
+    GetFaction("france")->relations.push_back({"spain",DiplomaticStatus::WAR,-80});
+
+    // Great Britain — north, across the Channel
+    {Faction f;f.id="britain";f.name="Great Britain";f.leaderName="George II";
+     f.color={0.8f,0.2f,0.2f};f.isPlayerControlled=false;f.treasury=10000;
+     f.relations.push_back({"france",DiplomaticStatus::WAR,-90});
+     m_factions.push_back(f);}
+    GetFaction("france")->relations.push_back({"britain",DiplomaticStatus::WAR,-90});
+
+    // Holy Roman Empire — east
+    {Faction f;f.id="hre";f.name="Holy Roman Empire";f.leaderName="Charles VII";
+     f.color={0.9f,0.85f,0.3f};f.isPlayerControlled=false;f.treasury=7000;
+     f.relations.push_back({"france",DiplomaticStatus::WAR,-60});
+     m_factions.push_back(f);}
+    GetFaction("france")->relations.push_back({"hre",DiplomaticStatus::WAR,-60});
+
+    // Enemy army creator (armies positioned OUTSIDE French borders, threatening)
+    auto mkEnemy=[&](const std::string& faction, const std::string& gen,
+                     glm::vec3 pos, int li, int gr, int cv, int ar){
+        Army a;a.id=m_nextArmyId++;a.factionId=faction;a.generalName=gen;
+        a.worldPosition=pos;a.currentProvinceId=-1; // outside French provinces
+        auto add=[&](UnitType t,const std::string&un,int mp,int at,int df,int mo,int up){
+            Unit u;u.id=m_nextUnitId++;u.type=t;u.name=un;
+            u.stats={mp,mp,at,df,mo,5,0,up,0.0f};a.units.push_back(u);
+        };
+        for(int i=0;i<li;i++)add(UnitType::LINE_INFANTRY,"Infantry #"+std::to_string(i+1),120,11,9,55,50);
+        for(int i=0;i<gr;i++)add(UnitType::GRENADIERS,"Grenadiers #"+std::to_string(i+1),80,15,13,70,80);
+        for(int i=0;i<cv;i++)add(UnitType::HUSSARS,"Hussars #"+std::to_string(i+1),60,13,7,60,65);
+        for(int i=0;i<ar;i++)add(UnitType::CANNON_6PDR,"Artillery #"+std::to_string(i+1),30,18,4,50,55);
+        int aid=a.id;m_armies.push_back(std::move(a));
+        GetFaction(faction)->armyIds.push_back(aid);
+    };
+
+    // British armies — threatening from the north (Channel ports)
+    mkEnemy("britain","Duke of Cumberland",{0.5f,0,-5.5f},4,1,1,1);
+    mkEnemy("britain","Lord Ligonier",{2.5f,0,-5.5f},3,1,1,0);
+
+    // Spanish armies — south of the Pyrenees
+    mkEnemy("spain","Duke of Montemar",{-3.5f,0,10.5f},3,1,1,1);
+    mkEnemy("spain","Marquis de la Mina",{-1.0f,0,10.5f},2,1,0,1);
+
+    // HRE armies — east of the Rhine
+    mkEnemy("hre","Prince Charles",{7.5f,0,-1.0f},3,2,1,1);
+    mkEnemy("hre","Count Browne",{7.5f,0,2.5f},2,1,1,0);
+
+    Logger::Info("Campaign: %d provinces, %d factions, %d armies, %d obstacles",
+        (int)m_provinces.size(),(int)m_factions.size(),(int)m_armies.size(),(int)m_obstacles.size());
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -328,6 +383,12 @@ void CampaignMap::HandleRightClick(const glm::vec3&worldPos){
     if(m_selectedArmyId<0)return;
     Army*army=GetArmy(m_selectedArmyId);
     if(!army)return;
+
+    // Only allow controlling your own armies
+    Faction*player=GetPlayerFaction();
+    if(!player||army->factionId!=player->id){
+        Logger::Warning("Cannot control enemy armies!");return;
+    }
 
     if(!IsPointPassable(worldPos)){Logger::Warning("Impassable!");return;}
 
@@ -374,7 +435,11 @@ void CampaignMap::HandleRightClick(const glm::vec3&worldPos){
 // ═══════════════════════════════════════════════════════════════
 // UPDATE
 // ═══════════════════════════════════════════════════════════════
-void CampaignMap::Update(float dt,const InputManager&){UpdateArmyPositions(dt);}
+void CampaignMap::Update(float dt,const InputManager&){
+    UpdateArmyPositions(dt);
+    DetectBattles();
+    if(m_notifTimer>0)m_notifTimer-=dt;
+}
 
 void CampaignMap::UpdateArmyPositions(float dt){
     for(auto&army:m_armies){
@@ -479,5 +544,177 @@ std::vector<Army*> CampaignMap::GetArmiesInProvince(int pid){std::vector<Army*>r
 Province* CampaignMap::GetProvinceAtWorldPos(const glm::vec3&w){glm::vec2 pt(w.x,w.z);for(auto&p:m_provinces)if(PtInPoly(pt,p.borderVertices))return&p;return nullptr;}
 void CampaignMap::MoveArmy(int id,int tgt){Province*p=GetProvince(tgt);if(p){m_selectedArmyId=id;HandleRightClick(p->cityPos);}}
 void CampaignMap::RecruitUnit(int,UnitType){}
-BattleSetupData CampaignMap::GetPendingBattle() { return m_pendingBattle.value(); }
-void CampaignMap::ApplyBattleResult(const BattleResult&) { m_pendingBattle.reset(); }
+BattleSetupData CampaignMap::GetPendingBattle(){return m_pendingBattle.value();}
+void CampaignMap::ApplyBattleResult(const BattleResult& r){
+    m_pendingBattle.reset();
+
+    // The battle resolver already modified the armies' unit stats.
+    // Clean up: remove destroyed units, check if army is wiped out
+    for(auto&a:m_armies)a.RemoveDestroyedUnits();
+
+    // Remove empty armies
+    for(int i=(int)m_armies.size()-1;i>=0;i--){
+        if(m_armies[i].units.empty()){
+            Logger::Info("Army '%s' destroyed!",m_armies[i].generalName.c_str());
+            // Check if this changes province ownership
+            Province*p=GetProvinceAtWorldPos(m_armies[i].worldPosition);
+            // Find the winning army nearby
+            for(auto&other:m_armies){
+                if(other.id!=m_armies[i].id && !other.units.empty()){
+                    float d=glm::distance(glm::vec2(other.worldPosition.x,other.worldPosition.z),
+                                          glm::vec2(m_armies[i].worldPosition.x,m_armies[i].worldPosition.z));
+                    if(d<2.0f && p && p->ownerFactionId!=other.factionId){
+                        CaptureProvince(p->id,other.factionId);
+                    }
+                }
+            }
+            DestroyArmy(m_armies[i].id);
+        }
+    }
+}
+
+void CampaignMap::SetNotification(const std::string&msg){
+    m_notification=msg;m_notifTimer=4.0f;
+    Logger::Info("NOTIFICATION: %s",msg.c_str());
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AI — Simple aggressive behavior
+// ═══════════════════════════════════════════════════════════════
+void CampaignMap::RunAI(){
+    Logger::Info("Running AI turns...");
+
+    for(auto&faction:m_factions){
+        if(faction.isPlayerControlled||faction.isEliminated)continue;
+
+        // Find French provinces to attack
+        Faction*player=GetPlayerFaction();
+        if(!player||!faction.IsAtWarWith(player->id))continue;
+
+        for(int aid:faction.armyIds){
+            Army*army=GetArmy(aid);
+            if(!army||army->isMoving)continue;
+
+            // Find nearest French province center to march toward
+            float bestDist=999;
+            glm::vec3 bestTarget={0,0,0};
+            for(auto&p:m_provinces){
+                if(p.ownerFactionId==player->id){
+                    float d=glm::distance(glm::vec2(army->worldPosition.x,army->worldPosition.z),
+                                          glm::vec2(p.center.x,p.center.z));
+                    if(d<bestDist){bestDist=d;bestTarget=p.center;}
+                }
+            }
+
+            if(bestDist<999){
+                // Move toward target
+                glm::vec2 dir=glm::normalize(glm::vec2(bestTarget.x-army->worldPosition.x,
+                                                        bestTarget.z-army->worldPosition.z));
+                float moveDist=std::min(army->movementRange,bestDist);
+                glm::vec3 dest={army->worldPosition.x+dir.x*moveDist,0,
+                                army->worldPosition.z+dir.y*moveDist};
+
+                // Simple direct movement (AI doesn't need A* for now)
+                if(IsPointOnLand(dest)){ // at least check it's on land
+                    army->fullPath={army->worldPosition,dest};
+                    army->currentPathIndex=1;
+                    army->isMoving=true;
+                    army->turnBreaks={moveDist};
+                    army->distanceTraveled=0;
+                    army->movementRange-=moveDist;
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BATTLE DETECTION — when hostile armies are close
+// ═══════════════════════════════════════════════════════════════
+void CampaignMap::DetectBattles(){
+    if(m_pendingBattle.has_value())return; // one at a time
+
+    for(int i=0;i<(int)m_armies.size();i++){
+        for(int j=i+1;j<(int)m_armies.size();j++){
+            if(m_armies[i].factionId==m_armies[j].factionId)continue;
+            if(m_armies[i].units.empty()||m_armies[j].units.empty())continue;
+
+            // Check if factions are at war
+            Faction*fi=GetFaction(m_armies[i].factionId);
+            Faction*fj=GetFaction(m_armies[j].factionId);
+            if(!fi||!fj||!fi->IsAtWarWith(fj->id))continue;
+
+            float dist=glm::distance(glm::vec2(m_armies[i].worldPosition.x,m_armies[i].worldPosition.z),
+                                     glm::vec2(m_armies[j].worldPosition.x,m_armies[j].worldPosition.z));
+            if(dist<1.0f){
+                // BATTLE!
+                BattleSetupData battle;
+                battle.attacker=&m_armies[i];
+                battle.defender=&m_armies[j];
+                Province*p=GetProvinceAtWorldPos(m_armies[i].worldPosition);
+                battle.provinceId=p?p->id:-1;
+                m_pendingBattle=battle;
+
+                // Stop both armies
+                m_armies[i].isMoving=false;m_armies[i].fullPath.clear();
+                m_armies[j].isMoving=false;m_armies[j].fullPath.clear();
+
+                SetNotification("BATTLE! "+m_armies[i].generalName+" vs "+m_armies[j].generalName);
+                Logger::Info("*** BATTLE: %s (%d men) vs %s (%d men) ***",
+                    m_armies[i].generalName.c_str(),m_armies[i].GetTotalManpower(),
+                    m_armies[j].generalName.c_str(),m_armies[j].GetTotalManpower());
+                return;
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PROVINCE CAPTURE
+// ═══════════════════════════════════════════════════════════════
+void CampaignMap::CaptureProvince(int provinceId,const std::string&newOwner){
+    Province*prov=GetProvince(provinceId);if(!prov)return;
+    std::string oldOwner=prov->ownerFactionId;
+    if(oldOwner==newOwner)return;
+
+    // Remove from old faction
+    Faction*oldF=GetFaction(oldOwner);
+    if(oldF){
+        auto&op=oldF->ownedProvinces;
+        op.erase(std::remove(op.begin(),op.end(),provinceId),op.end());
+    }
+
+    // Add to new faction
+    Faction*newF=GetFaction(newOwner);
+    if(newF){
+        newF->ownedProvinces.push_back(provinceId);
+        prov->ownerFactionId=newOwner;
+        prov->color=newF->color;
+        // Apply per-province tint
+        float t=(float)(prov->id%5)*0.025f;
+        prov->color.r+=t-0.05f;prov->color.g+=t*0.3f;
+    }
+
+    SetNotification(prov->name+" captured by "+(newF?newF->name:newOwner)+"!");
+    Logger::Info("Province %s captured by %s!",prov->name.c_str(),newOwner.c_str());
+
+    // Check if old faction is eliminated (no provinces left)
+    if(oldF&&oldF->ownedProvinces.empty()){
+        oldF->isEliminated=true;
+        SetNotification(oldF->name+" has been eliminated!");
+        Logger::Info("%s ELIMINATED!",oldF->name.c_str());
+    }
+}
+
+void CampaignMap::DestroyArmy(int armyId){
+    // Remove from faction's army list
+    for(auto&f:m_factions){
+        auto&ids=f.armyIds;
+        ids.erase(std::remove(ids.begin(),ids.end(),armyId),ids.end());
+    }
+    // Remove from army vector
+    m_armies.erase(std::remove_if(m_armies.begin(),m_armies.end(),
+        [armyId](const Army&a){return a.id==armyId;}),m_armies.end());
+
+    if(m_selectedArmyId==armyId){m_selectedArmyId=-1;m_selectedProvinceId=-1;}
+}

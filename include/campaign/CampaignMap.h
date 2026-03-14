@@ -82,10 +82,20 @@ public:
     BattleSetupData GetPendingBattle();
     void ApplyBattleResult(const BattleResult&);
 
+    // AI
+    void RunAI();
+    void DetectBattles();
+    void CaptureProvince(int provinceId, const std::string& newOwner);
+    void DestroyArmy(int armyId);
+
     // Selection
     int GetSelectedProvinceId() const { return m_selectedProvinceId; }
     int GetSelectedArmyId() const { return m_selectedArmyId; }
     glm::vec3 GetSelectionWorldPos() const { return m_selectionWorldPos; }
+
+    // HUD info
+    std::string GetNotification() const { return m_notification; }
+    float GetNotificationTimer() const { return m_notifTimer; }
 
     // Input
     void HandleLeftClick(const glm::vec3&);
@@ -105,6 +115,7 @@ private:
     void UpdateArmyPositions(float dt);
     void UpdateArmyProvince(Army&);
     void CheckForBattles();
+    void SetNotification(const std::string& msg);
 
     std::vector<Province> m_provinces;
     std::vector<Faction> m_factions;
@@ -116,4 +127,8 @@ private:
     int m_selectedProvinceId=-1, m_selectedArmyId=-1;
     glm::vec3 m_selectionWorldPos={0,0,0};
     std::optional<BattleSetupData> m_pendingBattle;
+
+    // Notifications
+    std::string m_notification;
+    float m_notifTimer = 0;
 };

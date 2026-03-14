@@ -1,0 +1,88 @@
+{
+    "_comment": "Empire Total Strategy — Campaign Definition (not yet loaded, for future use)",
+    "campaign_name": "18th Century Europe",
+    "start_year": 1700,
+    "turns_per_year": 4,
+
+    "factions": [
+        {
+            "id": "great_britain",
+            "name": "Great Britain",
+            "leader": "King George II",
+            "color": [0.8, 0.2, 0.2],
+            "starting_treasury": 8000,
+            "is_playable": true
+        },
+        {
+            "id": "france",
+            "name": "France",
+            "leader": "Louis XV",
+            "color": [0.2, 0.3, 0.8],
+            "starting_treasury": 7000,
+            "is_playable": true
+        },
+        {
+            "id": "prussia",
+            "name": "Prussia",
+            "leader": "Frederick the Great",
+            "color": [0.1, 0.1, 0.4],
+            "starting_treasury": 5000,
+            "is_playable": true
+        }
+    ],
+
+    "unit_templates": [
+        {
+            "type": "LINE_INFANTRY",
+            "name": "Line Infantry",
+            "manpower": 120,
+            "attack": 12,
+            "defense": 10,
+            "morale": 60,
+            "speed": 5,
+            "range": 8,
+            "upkeep": 50,
+            "recruit_cost": 500,
+            "recruit_turns": 1
+        },
+        {
+            "type": "GRENADIERS",
+            "name": "Grenadiers",
+            "manpower": 80,
+            "attack": 16,
+            "defense": 14,
+            "morale": 75,
+            "speed": 4,
+            "range": 6,
+            "upkeep": 80,
+            "recruit_cost": 800,
+            "recruit_turns": 2
+        },
+        {
+            "type": "DRAGOONS",
+            "name": "Dragoons",
+            "manpower": 60,
+            "attack": 14,
+            "defense": 8,
+            "morale": 65,
+            "speed": 10,
+            "range": 0,
+            "upkeep": 70,
+            "recruit_cost": 700,
+            "recruit_turns": 2
+        },
+        {
+            "type": "CANNON_6PDR",
+            "name": "6-Pounder Cannon",
+            "manpower": 30,
+            "attack": 20,
+            "defense": 4,
+            "morale": 50,
+            "speed": 3,
+            "range": 15,
+            "upkeep": 60,
+            "recruit_cost": 600,
+            "recruit_turns": 2
+        }
+    ]
+}

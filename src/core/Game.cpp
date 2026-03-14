@@ -172,24 +172,36 @@ void Game::ProcessInput()
         if (scroll != 0.0f)
             cam->Zoom(scroll);
 
-        // Left click → SELECT objects (armies, cities)
+        // Left click → SELECT objects (or exchange modal interaction)
         if (m_input->IsMouseButtonPressed(0)) {
             glm::vec2 mousePos = m_input->GetMousePos();
-            glm::vec3 worldPos = cam->ScreenToWorldPlane(
-                mousePos.x, mousePos.y,
-                (float)m_windowWidth, (float)m_windowHeight
-            );
-            m_campaignMap->HandleLeftClick(worldPos);
+            if (m_campaignMap->IsExchangeOpen()) {
+                // Route to exchange modal
+                m_campaignMap->HandleExchangeClick(
+                    mousePos.x, mousePos.y,
+                    (float)m_windowWidth, (float)m_windowHeight);
+            } else {
+                glm::vec3 worldPos = cam->ScreenToWorldPlane(
+                    mousePos.x, mousePos.y,
+                    (float)m_windowWidth, (float)m_windowHeight
+                );
+                m_campaignMap->HandleLeftClick(worldPos);
+            }
         }
 
-        // Right click → ISSUE MOVE ORDER to selected army
-        if (m_input->IsMouseButtonPressed(1)) {
+        // Right click → ISSUE MOVE ORDER / MERGE (not during exchange)
+        if (m_input->IsMouseButtonPressed(1) && !m_campaignMap->IsExchangeOpen()) {
             glm::vec2 mousePos = m_input->GetMousePos();
             glm::vec3 worldPos = cam->ScreenToWorldPlane(
                 mousePos.x, mousePos.y,
                 (float)m_windowWidth, (float)m_windowHeight
             );
             m_campaignMap->HandleRightClick(worldPos);
+        }
+
+        // Escape closes exchange modal
+        if (m_input->IsKeyPressed(GLFW_KEY_ESCAPE) && m_campaignMap->IsExchangeOpen()) {
+            m_campaignMap->CancelExchange();
         }
     }
 }
@@ -215,16 +227,29 @@ void Game::Update(float deltaTime)
             // Check if a battle should trigger
             if (m_campaignMap->HasPendingBattle()) {
                 auto battleData = m_campaignMap->GetPendingBattle();
-                m_battleScene->Setup(battleData);
+                m_battleScene->Setup(battleData, *m_campaignMap);
                 m_state = GameState::BATTLE;
             }
             break;
 
         case GameState::BATTLE:
             m_battleScene->Update(deltaTime, *m_input);
+
+            // Route clicks to battle scene
+            if (m_input->IsMouseButtonPressed(0)) {
+                glm::vec2 mp = m_input->GetMousePos();
+                m_battleScene->HandleClick(mp.x, mp.y,
+                    (float)m_windowWidth, (float)m_windowHeight);
+            }
+
             if (m_battleScene->IsFinished()) {
-                auto result = m_battleScene->GetResult();
-                m_campaignMap->ApplyBattleResult(result);
+                if (m_battleScene->IsRetreated()) {
+                    // Retreat: just clear the battle, attacker already lost men
+                    m_campaignMap->ApplyBattleResult(m_battleScene->GetResult());
+                } else {
+                    auto result = m_battleScene->GetResult();
+                    m_campaignMap->ApplyBattleResult(result);
+                }
                 m_state = GameState::CAMPAIGN_MAP;
             }
             break;

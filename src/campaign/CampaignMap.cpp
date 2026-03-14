@@ -380,6 +380,7 @@ void CampaignMap::HandleLeftClick(const glm::vec3&worldPos){
 }
 
 void CampaignMap::HandleRightClick(const glm::vec3&worldPos){
+    if(m_exchangeOpen)return; // modal is open, ignore map clicks
     if(m_selectedArmyId<0)return;
     Army*army=GetArmy(m_selectedArmyId);
     if(!army)return;
@@ -388,6 +389,47 @@ void CampaignMap::HandleRightClick(const glm::vec3&worldPos){
     Faction*player=GetPlayerFaction();
     if(!player||army->factionId!=player->id){
         Logger::Warning("Cannot control enemy armies!");return;
+    }
+
+    // ── Check if right-clicking a friendly army → MERGE ──
+    // Armies must be within 1.5 world units of each other
+    glm::vec2 clickPt(worldPos.x,worldPos.z);
+    for(auto&other:m_armies){
+        if(other.id==army->id)continue;
+        if(other.factionId!=player->id)continue;
+        float d=glm::distance(clickPt,glm::vec2(other.worldPosition.x,other.worldPosition.z));
+        if(d<0.8f){
+            // Check proximity between the two armies
+            float armyDist=glm::distance(
+                glm::vec2(army->worldPosition.x,army->worldPosition.z),
+                glm::vec2(other.worldPosition.x,other.worldPosition.z));
+            if(armyDist>1.5f){
+                SetNotification("Armies too far apart to merge! Move them closer.");
+                return;
+            }
+
+            int totalUnits=(int)army->units.size()+(int)other.units.size();
+            if(totalUnits<=Army::MAX_UNITS){
+                for(auto&u:other.units) army->units.push_back(std::move(u));
+                other.units.clear();
+                SetNotification("Armies merged! ("+std::to_string((int)army->units.size())+" units)");
+                DestroyArmy(other.id);
+            } else {
+                // Open exchange modal — save backups for cancel
+                m_exchangeOpen=true;
+                m_exchangeArmyA=m_selectedArmyId;
+                m_exchangeArmyB=other.id;
+                m_exchangeSelA.assign(army->units.size(),false);
+                m_exchangeSelB.assign(other.units.size(),false);
+                // Deep copy units for backup
+                m_backupUnitsA=army->units;
+                m_backupUnitsB=other.units;
+                Logger::Info("Unit Exchange opened: %s (%d) <-> %s (%d)",
+                    army->generalName.c_str(),(int)army->units.size(),
+                    other.generalName.c_str(),(int)other.units.size());
+            }
+            return;
+        }
     }
 
     if(!IsPointPassable(worldPos)){Logger::Warning("Impassable!");return;}
@@ -544,6 +586,138 @@ std::vector<Army*> CampaignMap::GetArmiesInProvince(int pid){std::vector<Army*>r
 Province* CampaignMap::GetProvinceAtWorldPos(const glm::vec3&w){glm::vec2 pt(w.x,w.z);for(auto&p:m_provinces)if(PtInPoly(pt,p.borderVertices))return&p;return nullptr;}
 void CampaignMap::MoveArmy(int id,int tgt){Province*p=GetProvince(tgt);if(p){m_selectedArmyId=id;HandleRightClick(p->cityPos);}}
 void CampaignMap::RecruitUnit(int,UnitType){}
+
+// ═══════════════════════════════════════════════════════════════
+// UNIT EXCHANGE MODAL — Live swap inside, Accept/Cancel to commit/revert
+// ═══════════════════════════════════════════════════════════════
+void CampaignMap::HandleExchangeClick(float sx, float sy, float sw, float sh){
+    if(!m_exchangeOpen)return;
+    Army*a=GetArmy(m_exchangeArmyA);
+    Army*b=GetArmy(m_exchangeArmyB);
+    if(!a||!b){CancelExchange();return;}
+
+    // Modal layout (must match renderer)
+    float panW=sw*0.65f, panH=sh*0.7f;
+    float px=(sw-panW)/2, py=(sh-panH)/2;
+    float halfW=(panW-30)/2;
+    float cardW=34, cardH=50, cardGap=4;
+    float unitY=py+80;
+    float leftX=px+10, rightX=px+halfW+20;
+    float cx=sw/2;
+
+    // Buttons layout (3 buttons: Swap center, Accept left, Cancel right)
+    float btnW=70, btnH=30;
+    float swapX=cx-btnW/2, swapY=py+panH/2-btnH/2; // center swap button
+    float acceptX=px+panW/2-btnW-40, acceptY=py+panH-45;
+    float cancelX=px+panW/2+40, cancelY=acceptY;
+
+    // Swap button (center)
+    if(sx>=swapX&&sx<=swapX+btnW&&sy>=swapY&&sy<=swapY+btnH){
+        SwapSelectedUnits();return;
+    }
+    // Accept button
+    if(sx>=acceptX&&sx<=acceptX+btnW&&sy>=acceptY&&sy<=acceptY+btnH){
+        ConfirmExchange();return;
+    }
+    // Cancel button
+    if(sx>=cancelX&&sx<=cancelX+btnW&&sy>=cancelY&&sy<=cancelY+btnH){
+        CancelExchange();return;
+    }
+
+    // Check left side unit clicks (Army A)
+    for(int i=0;i<(int)a->units.size();i++){
+        float ux=leftX+(cardW+cardGap)*(i%6);
+        float uy=unitY+(cardH+cardGap)*(i/6);
+        if(sx>=ux&&sx<=ux+cardW&&sy>=uy&&sy<=uy+cardH){
+            if(i<(int)m_exchangeSelA.size()) m_exchangeSelA[i]=!m_exchangeSelA[i];
+            return;
+        }
+    }
+
+    // Check right side unit clicks (Army B)
+    for(int i=0;i<(int)b->units.size();i++){
+        float ux=rightX+(cardW+cardGap)*(i%6);
+        float uy=unitY+(cardH+cardGap)*(i/6);
+        if(sx>=ux&&sx<=ux+cardW&&sy>=uy&&sy<=uy+cardH){
+            if(i<(int)m_exchangeSelB.size()) m_exchangeSelB[i]=!m_exchangeSelB[i];
+            return;
+        }
+    }
+}
+
+// Live swap: moves selected units between armies inside the modal
+void CampaignMap::SwapSelectedUnits(){
+    Army*a=GetArmy(m_exchangeArmyA);
+    Army*b=GetArmy(m_exchangeArmyB);
+    if(!a||!b)return;
+
+    // Gather selected from A
+    std::vector<Unit> fromA;
+    for(int i=(int)m_exchangeSelA.size()-1;i>=0;i--){
+        if(i<(int)a->units.size()&&m_exchangeSelA[i]){
+            fromA.push_back(std::move(a->units[i]));
+            a->units.erase(a->units.begin()+i);
+        }
+    }
+    // Gather selected from B
+    std::vector<Unit> fromB;
+    for(int i=(int)m_exchangeSelB.size()-1;i>=0;i--){
+        if(i<(int)b->units.size()&&m_exchangeSelB[i]){
+            fromB.push_back(std::move(b->units[i]));
+            b->units.erase(b->units.begin()+i);
+        }
+    }
+
+    // Check validity
+    int newA=(int)a->units.size()+(int)fromB.size();
+    int newB=(int)b->units.size()+(int)fromA.size();
+    if(newA>Army::MAX_UNITS||newB>Army::MAX_UNITS){
+        // Revert
+        for(auto&u:fromA)a->units.push_back(std::move(u));
+        for(auto&u:fromB)b->units.push_back(std::move(u));
+        SetNotification("Cannot swap — would exceed 20 units!");
+        return;
+    }
+
+    // Execute swap
+    for(auto&u:fromB)a->units.push_back(std::move(u));
+    for(auto&u:fromA)b->units.push_back(std::move(u));
+
+    // Reset selections for new state
+    m_exchangeSelA.assign(a->units.size(),false);
+    m_exchangeSelB.assign(b->units.size(),false);
+
+    Logger::Info("Swapped! A=%d, B=%d",(int)a->units.size(),(int)b->units.size());
+}
+
+void CampaignMap::ConfirmExchange(){
+    if(!m_exchangeOpen)return;
+    // Changes are already live from SwapSelectedUnits — just close
+    Army*a=GetArmy(m_exchangeArmyA);
+    Army*b=GetArmy(m_exchangeArmyB);
+
+    // Clean up empty armies
+    if(a&&a->units.empty())DestroyArmy(m_exchangeArmyA);
+    if(b&&b->units.empty())DestroyArmy(m_exchangeArmyB);
+
+    m_backupUnitsA.clear();m_backupUnitsB.clear();
+    m_exchangeOpen=false;
+    SetNotification("Exchange confirmed!");
+    Logger::Info("Exchange confirmed");
+}
+
+void CampaignMap::CancelExchange(){
+    if(!m_exchangeOpen){m_exchangeOpen=false;return;}
+    // Restore from backups
+    Army*a=GetArmy(m_exchangeArmyA);
+    Army*b=GetArmy(m_exchangeArmyB);
+    if(a&&!m_backupUnitsA.empty())a->units=std::move(m_backupUnitsA);
+    if(b&&!m_backupUnitsB.empty())b->units=std::move(m_backupUnitsB);
+    m_backupUnitsA.clear();m_backupUnitsB.clear();
+    m_exchangeOpen=false;m_exchangeArmyA=-1;m_exchangeArmyB=-1;
+    m_exchangeSelA.clear();m_exchangeSelB.clear();
+    Logger::Info("Exchange cancelled — reverted");
+}
 BattleSetupData CampaignMap::GetPendingBattle(){return m_pendingBattle.value();}
 void CampaignMap::ApplyBattleResult(const BattleResult& r){
     m_pendingBattle.reset();

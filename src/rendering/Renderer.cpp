@@ -204,6 +204,7 @@ void Renderer::RenderCampaignMap(const CampaignMap&map){
     // HUD (2D overlay, after all 3D)
     RenderHUD(map);
     RenderNotification(map);
+    RenderExchangeModal(map);
 }
 
 void Renderer::RenderWater(){
@@ -554,5 +555,304 @@ void Renderer::RenderNotification(const CampaignMap&map){
     glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
 }
 
-void Renderer::RenderBattle(const BattleScene&){glClearColor(0.3f,0.15f,0.1f,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);glClearColor(0.05f,0.08f,0.15f,1);}
+// ── Unit Exchange Modal ───────────────────────────────────────
+void Renderer::RenderExchangeModal(const CampaignMap&map){
+    if(!map.IsExchangeOpen())return;
+    const Army*a=map.GetArmy(map.GetExchangeArmyA());
+    const Army*b=map.GetArmy(map.GetExchangeArmyB());
+    if(!a||!b)return;
+    const auto&selA=map.GetExchangeSelA();
+    const auto&selB=map.GetExchangeSelB();
+
+    glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
+    float sw=(float)m_width,sh=(float)m_height;
+
+    // Dim background
+    DrawScreenQuad(0,0,sw,sh,{0,0,0,0.5f});
+
+    // Panel
+    float panW=sw*0.65f,panH=sh*0.7f;
+    float px=(sw-panW)/2,py=(sh-panH)/2;
+    DrawScreenQuad(px,py,panW,panH,{0.18f,0.14f,0.10f,0.95f});
+    DrawScreenQuad(px+3,py+3,panW-6,panH-6,{0.35f,0.28f,0.20f,0.95f});
+
+    // Title bar
+    DrawScreenQuad(px+10,py+8,panW-20,30,{0.25f,0.20f,0.15f,0.9f});
+
+    // Divider
+    float cx=sw/2;
+    DrawScreenQuad(cx-1,py+45,2,panH-65,{0.15f,0.12f,0.08f,0.8f});
+
+    // Swap button (center, between the armies)
+    float btnW=70,btnH=30;
+    float swapX=cx-btnW/2, swapY=py+panH/2-btnH/2;
+    DrawScreenQuad(swapX,swapY,btnW,btnH,{0.45f,0.35f,0.15f,0.9f});
+    DrawScreenQuad(swapX+2,swapY+2,btnW-4,btnH-4,{0.6f,0.5f,0.25f,0.9f});
+    // Arrows on swap button
+    DrawScreenQuad(swapX+10,swapY+8,btnW-20,3,{0.9f,0.85f,0.6f,0.9f});
+    DrawScreenQuad(swapX+10,swapY+btnH-11,btnW-20,3,{0.9f,0.85f,0.6f,0.9f});
+
+    float halfW=(panW-30)/2;
+    float leftX=px+10,rightX=px+halfW+20;
+    float unitY=py+80;
+    float cardW=34,cardH=50,cardGap=4;
+
+    const Faction*fa=map.GetFaction(a->factionId);
+    const Faction*fb=map.GetFaction(b->factionId);
+    glm::vec3 colA=fa?fa->color:glm::vec3(0.5f);
+    glm::vec3 colB=fb?fb->color:glm::vec3(0.5f);
+
+    // Army A header + unit count bar
+    DrawScreenQuad(leftX,py+48,halfW,6,{colA.r,colA.g,colA.b,1});
+    DrawScreenQuad(leftX,py+58,(float)a->units.size()/20.0f*halfW,8,{0.5f,0.5f,0.6f,0.7f});
+
+    // Army A units
+    for(int i=0;i<(int)a->units.size();i++){
+        float ux=leftX+(cardW+cardGap)*(i%6);
+        float uy=unitY+(cardH+cardGap)*(i/6);
+        bool sel=(i<(int)selA.size()&&selA[i]);
+        DrawScreenQuad(ux,uy,cardW,cardH,sel?glm::vec4(0.4f,0.7f,0.3f,0.9f):glm::vec4(0.2f,0.18f,0.14f,0.8f));
+        glm::vec4 tc={0.4f,0.4f,0.5f,0.9f};
+        if(a->units[i].type==UnitType::LINE_INFANTRY)tc={0.3f,0.4f,0.8f,0.9f};
+        if(a->units[i].type==UnitType::GRENADIERS)tc={0.8f,0.3f,0.3f,0.9f};
+        if(a->units[i].type==UnitType::DRAGOONS||a->units[i].type==UnitType::HUSSARS)tc={0.3f,0.7f,0.3f,0.9f};
+        if(a->units[i].type==UnitType::CANNON_6PDR||a->units[i].type==UnitType::CANNON_12PDR)tc={0.7f,0.6f,0.3f,0.9f};
+        float hp=(float)a->units[i].stats.manpower/150.0f;
+        DrawScreenQuad(ux+3,uy+3+(cardH-6)*(1-hp),cardW-6,(cardH-6)*hp,tc);
+    }
+
+    // Army B header
+    DrawScreenQuad(rightX,py+48,halfW,6,{colB.r,colB.g,colB.b,1});
+    DrawScreenQuad(rightX,py+58,(float)b->units.size()/20.0f*halfW,8,{0.5f,0.5f,0.6f,0.7f});
+
+    // Army B units
+    for(int i=0;i<(int)b->units.size();i++){
+        float ux=rightX+(cardW+cardGap)*(i%6);
+        float uy=unitY+(cardH+cardGap)*(i/6);
+        bool sel=(i<(int)selB.size()&&selB[i]);
+        DrawScreenQuad(ux,uy,cardW,cardH,sel?glm::vec4(0.4f,0.7f,0.3f,0.9f):glm::vec4(0.2f,0.18f,0.14f,0.8f));
+        glm::vec4 tc={0.4f,0.4f,0.5f,0.9f};
+        if(b->units[i].type==UnitType::LINE_INFANTRY)tc={0.3f,0.4f,0.8f,0.9f};
+        if(b->units[i].type==UnitType::GRENADIERS)tc={0.8f,0.3f,0.3f,0.9f};
+        if(b->units[i].type==UnitType::DRAGOONS||b->units[i].type==UnitType::HUSSARS)tc={0.3f,0.7f,0.3f,0.9f};
+        if(b->units[i].type==UnitType::CANNON_6PDR||b->units[i].type==UnitType::CANNON_12PDR)tc={0.7f,0.6f,0.3f,0.9f};
+        float hp=(float)b->units[i].stats.manpower/150.0f;
+        DrawScreenQuad(ux+3,uy+3+(cardH-6)*(1-hp),cardW-6,(cardH-6)*hp,tc);
+    }
+
+    // Accept button (green, left of center)
+    float abtnW=70,abtnH=30;
+    float acceptX=px+panW/2-abtnW-40,acceptY=py+panH-45;
+    DrawScreenQuad(acceptX,acceptY,abtnW,abtnH,{0.15f,0.45f,0.15f,0.9f});
+    DrawScreenQuad(acceptX+2,acceptY+2,abtnW-4,abtnH-4,{0.2f,0.6f,0.2f,0.9f});
+
+    // Cancel button (red, right of center)
+    float cancelX=px+panW/2+40;
+    DrawScreenQuad(cancelX,acceptY,abtnW,abtnH,{0.5f,0.12f,0.12f,0.9f});
+    DrawScreenQuad(cancelX+2,acceptY+2,abtnW-4,abtnH-4,{0.65f,0.18f,0.18f,0.9f});
+
+    // Selection count indicators
+    int selCountA=0,selCountB=0;
+    for(bool s:selA)if(s)selCountA++;
+    for(bool s:selB)if(s)selCountB++;
+    // Show selected count as small blocks below each army
+    for(int i=0;i<selCountA;i++)DrawScreenQuad(leftX+i*8,py+panH-70,6,10,{0.4f,0.8f,0.3f,0.9f});
+    for(int i=0;i<selCountB;i++)DrawScreenQuad(rightX+i*8,py+panH-70,6,10,{0.4f,0.8f,0.3f,0.9f});
+
+    glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
+}
+
+void Renderer::RenderBattle(const BattleScene& battle){
+    glClearColor(0.08f,0.06f,0.04f,1);
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
+    glClearColor(0.05f,0.08f,0.15f,1);
+    glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
+
+    float sw=(float)m_width,sh=(float)m_height;
+    float cx=sw/2;
+    const auto&atk=battle.GetAttackerSnap();
+    const auto&def=battle.GetDefenderSnap();
+
+    // Helper lambda for unit type color
+    auto unitCol=[](UnitType t)->glm::vec4{
+        if(t==UnitType::LINE_INFANTRY)return{0.3f,0.4f,0.8f,0.9f};
+        if(t==UnitType::GRENADIERS)return{0.8f,0.3f,0.3f,0.9f};
+        if(t==UnitType::DRAGOONS||t==UnitType::HUSSARS)return{0.3f,0.7f,0.3f,0.9f};
+        if(t==UnitType::CANNON_6PDR||t==UnitType::CANNON_12PDR)return{0.7f,0.6f,0.3f,0.9f};
+        return{0.4f,0.4f,0.5f,0.9f};
+    };
+
+    if(battle.GetPhase()==BattlePhase::PRE_BATTLE){
+        // ═══════════════════════════════════════════════════════
+        // PRE-BATTLE DEPLOYMENT SCREEN
+        // ═══════════════════════════════════════════════════════
+
+        // Full-screen dim overlay
+        DrawScreenQuad(0,0,sw,sh,{0.05f,0.03f,0.02f,0.7f});
+
+        // Top banner
+        float banH=50;
+        DrawScreenQuad(0,0,sw,banH,{0.18f,0.14f,0.10f,0.95f});
+        DrawScreenQuad(cx-120,5,240,banH-10,{0.25f,0.2f,0.15f,0.9f});
+
+        // ── Left panel: Your Forces ──
+        float lpW=sw*0.28f,lpH=sh-banH-160;
+        float lpX=10,lpY=banH+10;
+        DrawScreenQuad(lpX,lpY,lpW,lpH,{0.12f,0.10f,0.08f,0.9f});
+        DrawScreenQuad(lpX+2,lpY+2,lpW-4,lpH-4,{0.3f,0.25f,0.18f,0.9f});
+
+        // Attacker faction color stripe
+        DrawScreenQuad(lpX+5,lpY+5,lpW-10,6,{atk.factionColor.r,atk.factionColor.g,atk.factionColor.b,1});
+
+        // Manpower bar
+        DrawScreenQuad(lpX+10,lpY+20,lpW-20,10,{0.15f,0.12f,0.08f,0.6f});
+        float maxMen=(float)std::max({atk.totalManpower,def.totalManpower,1});
+        DrawScreenQuad(lpX+10,lpY+20,(lpW-20)*atk.totalManpower/maxMen,10,
+            {atk.factionColor.r,atk.factionColor.g,atk.factionColor.b,0.8f});
+
+        // Unit cards
+        float cardW=32,cardH=45,cardGap=3;
+        for(int i=0;i<(int)atk.units.size();i++){
+            float ux=lpX+8+(cardW+cardGap)*(i%7);
+            float uy=lpY+40+(cardH+cardGap)*(i/7);
+            DrawScreenQuad(ux,uy,cardW,cardH,{0.15f,0.12f,0.08f,0.7f});
+            glm::vec4 tc=unitCol(atk.units[i].type);
+            float hp=(float)atk.units[i].manpowerBefore/150.0f;
+            DrawScreenQuad(ux+2,uy+2+(cardH-4)*(1-hp),cardW-4,(cardH-4)*hp,tc);
+        }
+
+        // ── Right panel: Enemy Forces ──
+        float rpX=sw-lpW-10;
+        DrawScreenQuad(rpX,lpY,lpW,lpH,{0.12f,0.10f,0.08f,0.9f});
+        DrawScreenQuad(rpX+2,lpY+2,lpW-4,lpH-4,{0.3f,0.25f,0.18f,0.9f});
+
+        DrawScreenQuad(rpX+5,lpY+5,lpW-10,6,{def.factionColor.r,def.factionColor.g,def.factionColor.b,1});
+        DrawScreenQuad(rpX+10,lpY+20,lpW-20,10,{0.15f,0.12f,0.08f,0.6f});
+        DrawScreenQuad(rpX+10,lpY+20,(lpW-20)*def.totalManpower/maxMen,10,
+            {def.factionColor.r,def.factionColor.g,def.factionColor.b,0.8f});
+
+        for(int i=0;i<(int)def.units.size();i++){
+            float ux=rpX+8+(cardW+cardGap)*(i%7);
+            float uy=lpY+40+(cardH+cardGap)*(i/7);
+            DrawScreenQuad(ux,uy,cardW,cardH,{0.15f,0.12f,0.08f,0.7f});
+            glm::vec4 tc=unitCol(def.units[i].type);
+            float hp=(float)def.units[i].manpowerBefore/150.0f;
+            DrawScreenQuad(ux+2,uy+2+(cardH-4)*(1-hp),cardW-4,(cardH-4)*hp,tc);
+        }
+
+        // ── Center: Battle details panel ──
+        float cpW=sw*0.35f,cpH=120;
+        float cpX=(sw-cpW)/2,cpY=sh-cpH-40;
+        DrawScreenQuad(cpX,cpY,cpW,cpH,{0.18f,0.14f,0.10f,0.95f});
+        DrawScreenQuad(cpX+2,cpY+2,cpW-4,cpH-4,{0.3f,0.25f,0.18f,0.95f});
+
+        // Predicted outcome bar (green=attacker advantage, red=defender)
+        float predW=cpW-30;
+        float pred=battle.GetPredictedOutcome();
+        DrawScreenQuad(cpX+15,cpY+15,predW,16,{0.15f,0.12f,0.08f,0.6f});
+        // Green portion (attacker chance)
+        DrawScreenQuad(cpX+15,cpY+15,predW*pred,16,{0.2f,0.65f,0.2f,0.9f});
+        // Red portion (defender chance)
+        DrawScreenQuad(cpX+15+predW*pred,cpY+15,predW*(1-pred),16,{0.7f,0.15f,0.15f,0.9f});
+        // Center marker
+        DrawScreenQuad(cpX+15+predW*0.5f-1,cpY+13,2,20,{0.9f,0.85f,0.7f,0.9f});
+
+        // Three buttons
+        float btnW=cpW/3-20,btnH=35;
+        float btnY=cpY+cpH-50;
+
+        // Fight button (disabled/grey for now)
+        float btn1X=cpX+15;
+        DrawScreenQuad(btn1X,btnY,btnW,btnH,{0.3f,0.25f,0.2f,0.5f});
+        DrawScreenQuad(btn1X+2,btnY+2,btnW-4,btnH-4,{0.4f,0.35f,0.3f,0.4f});
+
+        // Auto-resolve button (gold)
+        float btn2X=cpX+cpW/3+5;
+        DrawScreenQuad(btn2X,btnY,btnW,btnH,{0.5f,0.4f,0.1f,0.9f});
+        DrawScreenQuad(btn2X+2,btnY+2,btnW-4,btnH-4,{0.7f,0.55f,0.15f,0.9f});
+        // Crossed swords icon
+        DrawScreenQuad(btn2X+btnW/2-8,btnY+8,2,btnH-16,{0.95f,0.9f,0.7f,0.9f});
+        DrawScreenQuad(btn2X+btnW/2+6,btnY+8,2,btnH-16,{0.95f,0.9f,0.7f,0.9f});
+        DrawScreenQuad(btn2X+btnW/2-10,btnY+btnH/2-1,20,2,{0.95f,0.9f,0.7f,0.9f});
+
+        // Retreat button (dark red)
+        float btn3X=cpX+2*cpW/3-5;
+        DrawScreenQuad(btn3X,btnY,btnW,btnH,{0.5f,0.12f,0.08f,0.9f});
+        DrawScreenQuad(btn3X+2,btnY+2,btnW-4,btnH-4,{0.65f,0.18f,0.12f,0.9f});
+        // Arrow icon (retreat)
+        DrawScreenQuad(btn3X+10,btnY+btnH/2-1,btnW-20,2,{0.9f,0.8f,0.7f,0.9f});
+        DrawScreenQuad(btn3X+10,btnY+btnH/2-5,2,8,{0.9f,0.8f,0.7f,0.9f});
+
+    } else {
+        // ═══════════════════════════════════════════════════════
+        // POST-BATTLE RESULTS SCREEN
+        // ═══════════════════════════════════════════════════════
+        bool atkWon=battle.AttackerWon();
+
+        float panW=sw*0.65f,panH=sh*0.75f;
+        float px=(sw-panW)/2,py=(sh-panH)/2;
+        DrawScreenQuad(px,py,panW,panH,{0.18f,0.14f,0.10f,0.95f});
+        DrawScreenQuad(px+3,py+3,panW-6,panH-6,{0.35f,0.28f,0.20f,0.95f});
+
+        // Title: Victory/Defeat
+        float titleH=40;
+        DrawScreenQuad(px+panW/2-100,py+8,200,titleH,{0.25f,0.2f,0.15f,0.9f});
+        if(atkWon) DrawScreenQuad(px+panW/2-95,py+12,190,titleH-8,{0.15f,0.45f,0.15f,0.8f});
+        else       DrawScreenQuad(px+panW/2-95,py+12,190,titleH-8,{0.55f,0.12f,0.12f,0.8f});
+
+        // Stats table area
+        float tableY=py+60;
+        DrawScreenQuad(px+15,tableY,panW-30,60,{0.25f,0.2f,0.15f,0.8f});
+
+        // Attacker stats row
+        DrawScreenQuad(px+20,tableY+5,8,20,{atk.factionColor.r,atk.factionColor.g,atk.factionColor.b,1});
+        // Deployed bar
+        float maxDep=(float)std::max(atk.totalManpower,def.totalManpower);
+        DrawScreenQuad(px+35,tableY+5,120*(float)atk.totalManpower/maxDep,8,{0.5f,0.5f,0.6f,0.8f});
+        // Lost bar (red)
+        float atkLoss=(float)battle.GetResult().attackerCasualties;
+        DrawScreenQuad(px+35,tableY+15,120*atkLoss/std::max((float)atk.totalManpower,1.f),8,{0.8f,0.2f,0.2f,0.8f});
+
+        // Defender stats row
+        DrawScreenQuad(px+20,tableY+32,8,20,{def.factionColor.r,def.factionColor.g,def.factionColor.b,1});
+        DrawScreenQuad(px+35,tableY+32,120*(float)def.totalManpower/maxDep,8,{0.5f,0.5f,0.6f,0.8f});
+        float defLoss=(float)battle.GetResult().defenderCasualties;
+        DrawScreenQuad(px+35,tableY+42,120*defLoss/std::max((float)def.totalManpower,1.f),8,{0.8f,0.2f,0.2f,0.8f});
+
+        // Unit review header
+        DrawScreenQuad(px+15,tableY+70,panW-30,25,{0.25f,0.2f,0.15f,0.9f});
+
+        // Unit cards (your army review)
+        float cardW=34,cardH=55,cardGap=4;
+        float unitY=tableY+100;
+        const auto& reviewArmy = atkWon ? atk : def; // show winner's units
+
+        for(int i=0;i<(int)atk.units.size();i++){
+            float ux=px+20+(cardW+cardGap)*(i%((int)((panW-40)/(cardW+cardGap))));
+            float uy=unitY+(cardH+cardGap)*(i/((int)((panW-40)/(cardW+cardGap))));
+            DrawScreenQuad(ux,uy,cardW,cardH,{0.15f,0.12f,0.08f,0.7f});
+            glm::vec4 tc=unitCol(atk.units[i].type);
+            float hpB=(float)atk.units[i].manpowerBefore/150.0f;
+            float hpA=(float)atk.units[i].manpowerAfter/150.0f;
+            // Before (dimmed)
+            DrawScreenQuad(ux+2,uy+2,cardW-4,(cardH-4)*hpB,{tc.r*0.3f,tc.g*0.3f,tc.b*0.3f,0.4f});
+            // After (bright, from bottom)
+            float aH=(cardH-4)*hpA;
+            DrawScreenQuad(ux+2,uy+2+(cardH-4)-aH,cardW-4,aH,tc);
+            if(atk.units[i].destroyed){
+                DrawScreenQuad(ux+4,uy+cardH/2-1,cardW-8,3,{0.9f,0.1f,0.1f,0.9f});
+                DrawScreenQuad(ux+cardW/2-1,uy+4,3,cardH-8,{0.9f,0.1f,0.1f,0.9f});
+            }
+        }
+
+        // Click to continue (pulsing)
+        float pulse=0.5f+0.5f*sin(m_time*3.0f);
+        DrawScreenQuad(cx-40,py+panH-35,80,25,{0.4f,0.35f,0.2f,0.8f*pulse});
+        // Checkmark icon
+        DrawScreenQuad(cx-8,py+panH-28,4,12,{0.9f,0.85f,0.6f,pulse});
+        DrawScreenQuad(cx-4,py+panH-20,12,4,{0.9f,0.85f,0.6f,pulse});
+    }
+
+    glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
+}
 void Renderer::OnResize(int w,int h){m_width=w;m_height=h;glViewport(0,0,w,h);if(m_camera)m_camera->OnResize((float)w/h);}

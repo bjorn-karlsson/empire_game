@@ -40,6 +40,7 @@ private:
     void RenderSelectionCircle(const CampaignMap&);
     void RenderHUD(const CampaignMap&);
     void RenderNotification(const CampaignMap&);
+    void RenderExchangeModal(const CampaignMap&);
 
     void DrawScreenQuad(float x,float y,float w,float h,glm::vec4 color);
 

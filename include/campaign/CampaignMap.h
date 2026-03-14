@@ -102,6 +102,17 @@ public:
     void HandleRightClick(const glm::vec3&);
     void HandleClick(const glm::vec3& w) { HandleLeftClick(w); }
 
+    // Unit Exchange Modal
+    bool IsExchangeOpen() const { return m_exchangeOpen; }
+    int GetExchangeArmyA() const { return m_exchangeArmyA; }
+    int GetExchangeArmyB() const { return m_exchangeArmyB; }
+    const std::vector<bool>& GetExchangeSelA() const { return m_exchangeSelA; }
+    const std::vector<bool>& GetExchangeSelB() const { return m_exchangeSelB; }
+    void HandleExchangeClick(float screenX, float screenY, float screenW, float screenH);
+    void SwapSelectedUnits(); // live swap inside modal
+    void ConfirmExchange();
+    void CancelExchange();
+
     int GetCurrentTurn() const { return m_currentTurn; }
     std::string GetCurrentSeason() const;
     std::string GetCurrentYear() const;
@@ -131,4 +142,11 @@ private:
     // Notifications
     std::string m_notification;
     float m_notifTimer = 0;
+
+    // Unit Exchange Modal
+    bool m_exchangeOpen = false;
+    int m_exchangeArmyA = -1, m_exchangeArmyB = -1;
+    std::vector<bool> m_exchangeSelA, m_exchangeSelB;
+    // Backup copies for cancel/revert
+    std::vector<Unit> m_backupUnitsA, m_backupUnitsB;
 };

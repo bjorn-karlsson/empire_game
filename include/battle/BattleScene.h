@@ -1,33 +1,56 @@
 #pragma once
-
 #include "campaign/CampaignMap.h"
 #include "battle/BattleResolver.h"
+#include <string>
+#include <vector>
 
 class InputManager;
 
-// ─── Battle Scene ─────────────────────────────────────────────
-// Phase 3: Auto-resolve only (shows a result screen)
-// Phase 4: Full real-time 3D battles with formations
-//
-// For now, this immediately auto-resolves when Setup() is called
-// and presents the results. Later, this becomes the real-time
-// battle engine.
+struct ArmySnapshot {
+    std::string generalName;
+    std::string factionId;
+    glm::vec3 factionColor={0.5f,0.5f,0.5f};
+    int totalManpower=0;
+    int unitCount=0;
+    struct UnitSnap{UnitType type;int manpowerBefore;int manpowerAfter;bool destroyed;};
+    std::vector<UnitSnap> units;
+};
+
+enum class BattlePhase { PRE_BATTLE, POST_BATTLE, DONE };
+
 class BattleScene {
 public:
-    BattleScene();
-    ~BattleScene();
+    BattleScene();~BattleScene();
 
-    void Setup(const BattleSetupData& data);
-    void Update(float deltaTime, const InputManager& input);
-    bool IsFinished() const { return m_finished; }
-    BattleResult GetResult() const { return m_result; }
+    void Setup(const BattleSetupData& data,const CampaignMap& map);
+    void Update(float dt,const InputManager& input);
+    void HandleClick(float sx,float sy,float sw,float sh);
+
+    bool IsFinished()const{return m_phase==BattlePhase::DONE;}
+    bool IsRetreated()const{return m_retreated;}
+    BattleResult GetResult()const{return m_result;}
+    BattlePhase GetPhase()const{return m_phase;}
+
+    const ArmySnapshot&GetAttackerSnap()const{return m_attackerSnap;}
+    const ArmySnapshot&GetDefenderSnap()const{return m_defenderSnap;}
+    bool AttackerWon()const{return m_result.attackerWon;}
+    glm::vec3 GetBattleWorldPos()const{return m_battlePos;}
+
+    // Predicted outcome (0=attacker certain loss, 0.5=even, 1=attacker certain win)
+    float GetPredictedOutcome()const{return m_predictedOutcome;}
 
 private:
-    BattleResolver m_resolver;
-    BattleResult   m_result;
-    BattleSetupData m_battleData;
+    void DoAutoResolve();
+    void DoRetreat();
 
-    bool  m_finished = true;
-    float m_resultDisplayTimer = 0.0f;
-    static constexpr float RESULT_DISPLAY_TIME = 3.0f;
+    BattleResolver m_resolver;
+    BattleResult m_result;
+    BattleSetupData m_battleData;
+    BattlePhase m_phase=BattlePhase::DONE;
+
+    ArmySnapshot m_attackerSnap,m_defenderSnap;
+    glm::vec3 m_battlePos={0,0,0};
+    float m_predictedOutcome=0.5f;
+    bool m_retreated=false;
+    float m_timer=0;
 };

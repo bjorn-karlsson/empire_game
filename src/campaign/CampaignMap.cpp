@@ -1035,86 +1035,74 @@ void CampaignMap::CancelExchange(){
     Logger::Info("Exchange cancelled — reverted");
 }
 BattleSetupData CampaignMap::GetPendingBattle(){return m_pendingBattle.value();}
-void CampaignMap::ApplyBattleResult(const BattleResult& r){
+void CampaignMap::ApplyBattleResult(const BattleResult& r) {
     m_pendingBattle.reset();
-    for(auto&a:m_armies)a.RemoveDestroyedUnits();
 
-    std::vector<int> toDestroy;
-    for(auto&a:m_armies)
-        if(a.units.empty())toDestroy.push_back(a.id);
+    // Clean up dead units from combat
+    for (auto& a : m_armies)a.RemoveDestroyedUnits();
 
-    // Find winner and loser among survivors near the battle
-    int winnerId=-1, loserId=-1;
-    float bestWinMen=0;
-
-    // Find two armies close together that were in a battle
-    for(int i=0;i<(int)m_armies.size();i++){
-        if(m_armies[i].units.empty())continue;
-        for(int j=i+1;j<(int)m_armies.size();j++){
-            if(m_armies[j].units.empty())continue;
-            if(m_armies[i].factionId==m_armies[j].factionId)continue;
-            float d=glm::distance(glm::vec2(m_armies[i].worldPosition.x,m_armies[i].worldPosition.z),
-                glm::vec2(m_armies[j].worldPosition.x,m_armies[j].worldPosition.z));
-            if(d<3.0f){
-                // These two fought — winner has more men
-                if(m_armies[i].GetTotalManpower()>=m_armies[j].GetTotalManpower()){
-                    winnerId=m_armies[i].id;loserId=m_armies[j].id;
-                } else {
-                    winnerId=m_armies[j].id;loserId=m_armies[i].id;
-                }
-            }
-        }
-        // Also check if this army is near a destroyed army
-        for(int did:toDestroy){
-            Army*dead=GetArmy(did);
-            if(!dead)continue;
-            float d=glm::distance(glm::vec2(m_armies[i].worldPosition.x,m_armies[i].worldPosition.z),
-                glm::vec2(dead->worldPosition.x,dead->worldPosition.z));
-            if(d<3.0f&&m_armies[i].GetTotalManpower()>bestWinMen){
-                bestWinMen=(float)m_armies[i].GetTotalManpower();
-                winnerId=m_armies[i].id;
-            }
-        }
+    // Determine winner and loser from stored IDs
+    int winnerId = -1, loserId = -1;
+    if (r.attackerWon) {
+        winnerId = r.attackerId;
+        loserId = r.defenderId;
+    }
+    else {
+        winnerId = r.defenderId;
+        loserId = r.attackerId;
     }
 
-    // Retreat the loser (if alive)
-    Army*loser=GetArmy(loserId);
-    if(loser&&!loser->units.empty()){
-        // Find nearest friendly city
-        float bestDist=999;glm::vec3 retreatDest=loser->worldPosition;
-        for(const auto&p:m_provinces){
-            if(p.ownerFactionId==loser->factionId){
-                float d=glm::distance(glm::vec2(loser->worldPosition.x,loser->worldPosition.z),
-                    glm::vec2(p.cityPos.x,p.cityPos.z));
-                if(d>0.5f&&d<bestDist){bestDist=d;retreatDest=p.cityPos;}
+    // Destroy armies with no units left
+    std::vector<int> toDestroy;
+    for (auto& a : m_armies)
+        if (a.units.empty())toDestroy.push_back(a.id);
+
+    // Retreat the loser (if still alive with units)
+    Army* loser = GetArmy(loserId);
+    if (loser && !loser->units.empty()) {
+        // Find nearest friendly city to retreat toward
+        float bestDist = 999; glm::vec3 retreatDest = loser->worldPosition;
+        for (const auto& p : m_provinces) {
+            if (p.ownerFactionId == loser->factionId) {
+                float d = glm::distance(glm::vec2(loser->worldPosition.x, loser->worldPosition.z),
+                    glm::vec2(p.cityPos.x, p.cityPos.z));
+                if (d > 0.5f && d < bestDist) { bestDist = d; retreatDest = p.cityPos; }
             }
         }
-        if(bestDist>998){
-            Army*w=GetArmy(winnerId);
-            if(w){
-                glm::vec2 away=glm::normalize(glm::vec2(loser->worldPosition.x-w->worldPosition.x,
-                    loser->worldPosition.z-w->worldPosition.z));
-                retreatDest={loser->worldPosition.x+away.x*4.0f,0,loser->worldPosition.z+away.y*4.0f};
+
+        // No friendly city found — flee in the opposite direction from the winner
+        if (bestDist > 998) {
+            Army* w = GetArmy(winnerId);
+            if (w) {
+                glm::vec2 away = glm::normalize(glm::vec2(
+                    loser->worldPosition.x - w->worldPosition.x,
+                    loser->worldPosition.z - w->worldPosition.z));
+                retreatDest = { loser->worldPosition.x + away.x * 4.0f,0,
+                             loser->worldPosition.z + away.y * 4.0f };
             }
         }
-        // Give full movement for retreat flee
-        loser->movementRange=loser->movementRangeMax;
-        SchedulePathTo(*loser,retreatDest,Army::Intent::MOVE);
-        // SchedulePathTo sets isMoving=true, army will walk and deplete range
-        Logger::Info("Army '%s' retreating!",loser->generalName.c_str());
+
+        // Give full movement for retreat — ignore fatigue
+        loser->movementRange = loser->movementRangeMax;
+        loser->distanceTraveled = 0;
+        loser->pathStartOffset = 0;
+        SchedulePathTo(*loser, retreatDest, Army::Intent::MOVE);
+
+        Logger::Info("Army '%s' retreating toward (%.1f,%.1f)!",
+            loser->generalName.c_str(), retreatDest.x, retreatDest.z);
     }
 
     // Province capture by winner
-    Army*winner=GetArmy(winnerId);
-    if(winner){
-        Province*p=GetProvinceAtWorldPos(winner->worldPosition);
-        if(p&&p->ownerFactionId!=winner->factionId)
-            CaptureProvince(p->id,winner->factionId);
+    Army* winner = GetArmy(winnerId);
+    if (winner && !winner->units.empty()) {
+        Province* p = GetProvinceAtWorldPos(winner->worldPosition);
+        if (p && p->ownerFactionId != winner->factionId)
+            CaptureProvince(p->id, winner->factionId);
     }
 
-    for(int aid:toDestroy)DestroyArmy(aid);
+    // Destroy empty armies last (after retreat logic has run)
+    for (int aid : toDestroy)DestroyArmy(aid);
 }
-
 void CampaignMap::SetNotification(const std::string&msg){
     m_notification=msg;m_notifTimer=4.0f;
     Logger::Info("NOTIFICATION: %s",msg.c_str());

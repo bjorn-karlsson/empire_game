@@ -9,9 +9,13 @@
 
 class InputManager;
 
-struct BattleSetupData { Army*attacker=nullptr;Army*defender=nullptr;int provinceId=-1; };
-struct BattleResult { bool attackerWon=false;int attackerCasualties=0,defenderCasualties=0,provinceId=-1; };
-
+struct BattleSetupData { Army* attacker = nullptr; Army* defender = nullptr; int provinceId = -1; };
+struct BattleResult {
+    bool attackerWon = false;
+    int attackerCasualties = 0, defenderCasualties = 0, provinceId = -1;
+    int attackerId = -1, defenderId = -1;   // ← ADD: track who fought
+    bool isRetreat = false;               // ← ADD: attacker chose to retreat
+};
 struct TerrainObstacle {
     std::string name, type;
     std::vector<glm::vec3> vertices;

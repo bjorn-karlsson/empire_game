@@ -77,6 +77,8 @@ void BattleScene::DoAutoResolve(){
     if(!m_battleData.attacker||!m_battleData.defender)return;
 
     m_result=m_resolver.Resolve(*m_battleData.attacker,*m_battleData.defender);
+    m_result.attackerId = m_battleData.attacker->id;    // ← ADD
+    m_result.defenderId = m_battleData.defender->id;    // ← ADD
 
     // Update snapshots with post-battle
     for(int i=0;i<(int)m_battleData.attacker->units.size()&&i<(int)m_attackerSnap.units.size();i++){
@@ -92,20 +94,15 @@ void BattleScene::DoAutoResolve(){
     Logger::Info("Auto-resolved: %s wins!",m_result.attackerWon?"Attacker":"Defender");
 }
 
-void BattleScene::DoRetreat(){
-    // Retreat: attacker loses some men (10%) and battle ends
-    m_retreated=true;
-    m_result.attackerWon=false;
-    m_result.attackerCasualties=0;m_result.defenderCasualties=0;
+void BattleScene::DoRetreat() {
+    m_retreated = true;
+    m_result.attackerWon = false;
+    m_result.isRetreat = true;
+    m_result.attackerCasualties = 0;
+    m_result.defenderCasualties = 0;
+    m_result.attackerId = m_battleData.attacker ? m_battleData.attacker->id : -1;
+    m_result.defenderId = m_battleData.defender ? m_battleData.defender->id : -1;
 
-    if(m_battleData.attacker){
-        for(auto&u:m_battleData.attacker->units){
-            int loss=(int)(u.stats.manpower*0.1f);
-            u.stats.manpower-=loss;
-            m_result.attackerCasualties+=loss;
-        }
-    }
-
-    m_phase=BattlePhase::DONE;
-    Logger::Info("Army retreated! Lost %d men",m_result.attackerCasualties);
+    m_phase = BattlePhase::DONE;
+    Logger::Info("Army retreated! (no casualties)");
 }

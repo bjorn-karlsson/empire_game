@@ -242,96 +242,140 @@ void Game::Update(float deltaTime)
     } else { safetyTimer = 0; }
 
     switch (m_state) {
-        case GameState::CAMPAIGN_MAP:
-        {
-            if (m_turnPhase == TurnExecPhase::IDLE) {
-                m_campaignMap->Update(deltaTime, *m_input);
-                m_ui->Update(deltaTime, *m_input);
+    case GameState::CAMPAIGN_MAP:
+    {
+        if (m_turnPhase == TurnExecPhase::IDLE) {
+            m_campaignMap->Update(deltaTime, *m_input);
+            m_ui->Update(deltaTime, *m_input);
 
-                if (m_ui->IsEndTurnButtonClicked() || m_input->IsKeyPressed(GLFW_KEY_SPACE) ||
-                    m_input->IsKeyPressed(GLFW_KEY_ENTER)) {
-                    m_ui->ClearEndTurnClick();
-                    m_campaignMap->StopAllArmies();
-                    // Execute with CURRENT fatigue — no restore yet
-                    m_turnPhase = TurnExecPhase::PLAYER_MOVES;
+            if (m_ui->IsEndTurnButtonClicked() || m_input->IsKeyPressed(GLFW_KEY_SPACE) ||
+                m_input->IsKeyPressed(GLFW_KEY_ENTER)) {
+                m_ui->ClearEndTurnClick();
+                m_campaignMap->StopAllArmies();
+                m_turnPhase = TurnExecPhase::PLAYER_MOVES;
+                m_followArmyId = -1;
+                m_turnExecTimer = 0.1f;
+                if (cam) m_savedCamDist = cam->GetDistance();
+                m_cameraLocked = true;
+
+                // Prepare AI faction order
+                m_aiFactionOrder = m_campaignMap->GetAIFactionIds();
+                m_execFactionIdx = 0;
+                m_currentAIFaction.clear();
+            }
+        }
+        // ── PLAYER MOVES: execute player's scheduled armies one by one ──
+        else if (m_turnPhase == TurnExecPhase::PLAYER_MOVES) {
+            m_campaignMap->Update(deltaTime, *m_input);
+            if (m_followArmyId >= 0) {
+                const Army* fa = m_campaignMap->GetArmy(m_followArmyId);
+                if (fa && fa->isMoving) {
+                    if (cam) cam->SetTarget(fa->worldPosition + glm::vec3(0, 0, 1));
+                }
+                else {
                     m_followArmyId = -1;
-                    m_turnExecTimer = 0.1f;
-                    if(cam) m_savedCamDist = cam->GetDistance();
-                    m_cameraLocked = true;
+                    m_turnExecTimer = 0.3f;
                 }
             }
-            else if (m_turnPhase == TurnExecPhase::PLAYER_MOVES) {
-                m_campaignMap->Update(deltaTime, *m_input);
-                if (m_followArmyId >= 0) {
-                    const Army* fa = m_campaignMap->GetArmy(m_followArmyId);
-                    if (fa && fa->isMoving) {
-                        if(cam) cam->SetTarget(fa->worldPosition + glm::vec3(0,0,1));
-                    } else {
-                        m_followArmyId = -1;
+            else {
+                m_turnExecTimer -= deltaTime;
+                if (m_turnExecTimer <= 0) {
+                    const Faction* pf = m_campaignMap->GetPlayerFaction();
+                    int nextId = pf ? m_campaignMap->StartNextScheduledArmy(pf->id) : -1;
+                    if (nextId >= 0) {
+                        m_followArmyId = nextId;
+                        const Army* a = m_campaignMap->GetArmy(nextId);
+                        if (a && cam) { cam->SetTarget(a->worldPosition + glm::vec3(0, 0, 1)); cam->SetDistance(12); }
+                    }
+                    else {
+                        // Player done → start first AI faction
+                        m_execFactionIdx = 0;
+                        m_turnPhase = TurnExecPhase::AI_FACTION;
                         m_turnExecTimer = 0.3f;
-                    }
-                } else {
-                    m_turnExecTimer -= deltaTime;
-                    if (m_turnExecTimer <= 0) {
-                        const Faction* pf = m_campaignMap->GetPlayerFaction();
-                        int nextId = pf ? m_campaignMap->StartNextScheduledArmy(pf->id) : -1;
-                        if (nextId >= 0) {
-                            m_followArmyId = nextId;
-                            const Army* a = m_campaignMap->GetArmy(nextId);
-                            if(a && cam){cam->SetTarget(a->worldPosition+glm::vec3(0,0,1));cam->SetDistance(12);}
-                        } else {
-                            m_turnPhase = TurnExecPhase::AI_FACTION;
-                            m_campaignMap->RunAI();
-                            m_turnExecTimer = 0.3f;
-                            m_followArmyId = -1;
-                        }
+                        m_followArmyId = -1;
+                        m_currentAIFaction.clear();
                     }
                 }
             }
-            else if (m_turnPhase == TurnExecPhase::AI_FACTION) {
-                m_campaignMap->Update(deltaTime, *m_input);
-                if (m_followArmyId >= 0) {
-                    const Army* fa = m_campaignMap->GetArmy(m_followArmyId);
-                    if (fa && fa->isMoving) {
-                        if(cam) cam->SetTarget(fa->worldPosition + glm::vec3(0,0,1));
-                    } else {
-                        m_followArmyId = -1;
+        }
+        // ── AI FACTION: process one faction at a time, sequentially ──
+        else if (m_turnPhase == TurnExecPhase::AI_FACTION) {
+            m_campaignMap->Update(deltaTime, *m_input);
+
+            if (m_followArmyId >= 0) {
+                // Watching an AI army move
+                const Army* fa = m_campaignMap->GetArmy(m_followArmyId);
+                if (fa && fa->isMoving) {
+                    if (cam) cam->SetTarget(fa->worldPosition + glm::vec3(0, 0, 1));
+                }
+                else {
+                    m_followArmyId = -1;
+                    m_turnExecTimer = 0.2f;
+                }
+            }
+            else {
+                m_turnExecTimer -= deltaTime;
+                if (m_turnExecTimer <= 0) {
+
+                    // If we haven't issued orders for the current faction yet, do it now
+                    if (m_currentAIFaction.empty() && m_execFactionIdx < (int)m_aiFactionOrder.size()) {
+                        m_currentAIFaction = m_aiFactionOrder[m_execFactionIdx];
+                        const Faction* f = m_campaignMap->GetFaction(m_currentAIFaction);
+                        if (f) Logger::Info("--- %s's turn ---", f->name.c_str());
+                        m_campaignMap->RunAIForFaction(m_currentAIFaction);
                         m_turnExecTimer = 0.2f;
                     }
-                } else {
-                    m_turnExecTimer -= deltaTime;
-                    if (m_turnExecTimer <= 0) {
+                    // Try to start/follow the next army for this faction
+                    else if (!m_currentAIFaction.empty()) {
+                        // Check if any army of this faction is still moving
                         bool anyMoving = false;
                         for (const auto& a : m_campaignMap->GetArmies()) {
-                            const Faction* f = m_campaignMap->GetFaction(a.factionId);
-                            if (f && !f->isPlayerControlled && a.isMoving) {
+                            if (a.factionId == m_currentAIFaction && a.isMoving) {
                                 m_followArmyId = a.id;
-                                if(cam){cam->SetTarget(a.worldPosition+glm::vec3(0,0,1));cam->SetDistance(12);}
+                                if (cam) { cam->SetTarget(a.worldPosition + glm::vec3(0, 0, 1)); cam->SetDistance(12); }
                                 anyMoving = true; break;
                             }
                         }
+
                         if (!anyMoving) {
-                            // ALL done — NOW restore fatigue and shift breaks
-                            m_campaignMap->ProcessTurn();
-                            m_turnPhase = TurnExecPhase::IDLE;
-                            m_cameraLocked = false;
-                            if(cam && m_savedCamDist > 0) cam->SetDistance(m_savedCamDist);
-                            Logger::Info("=== New turn — fatigue restored ===");
+                            // Try starting next scheduled army for this faction
+                            int nextId = m_campaignMap->StartNextScheduledArmy(m_currentAIFaction);
+                            if (nextId >= 0) {
+                                m_followArmyId = nextId;
+                                const Army* a = m_campaignMap->GetArmy(nextId);
+                                if (a && cam) { cam->SetTarget(a->worldPosition + glm::vec3(0, 0, 1)); cam->SetDistance(12); }
+                            }
+                            else {
+                                // This faction is done → advance to next faction
+                                Logger::Info("--- %s's turn complete ---", m_currentAIFaction.c_str());
+                                m_execFactionIdx++;
+                                m_currentAIFaction.clear();
+                                m_turnExecTimer = 0.4f;
+
+                                // Check if ALL factions are done
+                                if (m_execFactionIdx >= (int)m_aiFactionOrder.size()) {
+                                    m_campaignMap->ProcessTurn();
+                                    m_turnPhase = TurnExecPhase::IDLE;
+                                    m_cameraLocked = false;
+                                    if (cam && m_savedCamDist > 0) cam->SetDistance(m_savedCamDist);
+                                    Logger::Info("=== New turn — fatigue restored ===");
+                                }
+                            }
                         }
                     }
                 }
             }
-
-            if (m_campaignMap->HasPendingBattle()) {
-                auto battleData = m_campaignMap->GetPendingBattle();
-                m_battleScene->Setup(battleData, *m_campaignMap);
-                if(cam) cam->SetTarget(m_battleScene->GetBattleWorldPos()+glm::vec3(0,0,1));
-                m_state = GameState::BATTLE;
-                m_cameraLocked = false;
-            }
-            break;
         }
 
+        if (m_campaignMap->HasPendingBattle()) {
+            auto battleData = m_campaignMap->GetPendingBattle();
+            m_battleScene->Setup(battleData, *m_campaignMap);
+            if (cam) cam->SetTarget(m_battleScene->GetBattleWorldPos() + glm::vec3(0, 0, 1));
+            m_state = GameState::BATTLE;
+            m_cameraLocked = false;
+        }
+        break;
+    }
         case GameState::BATTLE:
             m_battleScene->Update(deltaTime, *m_input);
             if (m_input->IsMouseButtonPressed(0)) {

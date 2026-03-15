@@ -98,6 +98,8 @@ public:
 
     // AI
     void RunAI();
+    void RunAIForFaction(const std::string& factionId);
+    std::vector<std::string> GetAIFactionIds() const;
     void DetectBattles(); // only called intentionally now
     void StartBattle(int attackerArmyId, int defenderArmyId);
     void CaptureProvince(int provinceId, const std::string& newOwner);

@@ -695,18 +695,37 @@ void Renderer::RenderHUD(const CampaignMap&map){
         }
     }
 
-    // Faction indicators (top right - faction names with war status)
-    float factionY=6;
-    for(int fi=0;fi<(int)map.GetFactions().size();fi++){
-        const auto&f=map.GetFactions()[fi];
-        if(f.isPlayerControlled)continue;
-        float fx=sw-45-fi*85;
-        glm::vec4 fc={f.color.r,f.color.g,f.color.b,f.isEliminated?0.3f:0.9f};
-        DrawScreenQuad(fx,factionY,80,24,{0.05f,0.05f,0.08f,0.7f});
-        DrawScreenQuad(fx,factionY,4,24,fc);
-        DrawScreenText(f.name.substr(0,std::min((int)f.name.size(),10)),fx+8,factionY+5,1.0f,fc);
-        if(!f.isEliminated&&player&&f.IsAtWarWith(player->id)){
-            DrawScreenText("WAR",fx+55,factionY+5,0.9f,{0.9f,0.2f,0.2f,0.9f});
+    // Faction indicators (top right — flag-style boxes with status)
+    float factionX = sw - 10;
+    const Faction* playerF = map.GetPlayerFaction();
+    for (int fi = (int)map.GetFactions().size() - 1; fi >= 0; fi--) {
+        const auto& f = map.GetFactions()[fi];
+        if (f.isPlayerControlled)continue;
+
+        float boxW = 90, boxH = 28;
+        factionX -= boxW + 4;
+        float fy = 4;
+
+        // Background
+        float alpha = f.isEliminated ? 0.25f : 0.85f;
+        DrawScreenQuad(factionX, fy, boxW, boxH, { 0.08f,0.08f,0.12f,alpha });
+
+        // Faction color stripe on left
+        DrawScreenQuad(factionX, fy, 4, boxH, { f.color.r,f.color.g,f.color.b,alpha });
+
+        // Faction name
+        DrawScreenText(f.name, factionX + 8, fy + 3, 0.85f,
+            { 0.9f,0.85f,0.7f,f.isEliminated ? 0.4f : 1.0f });
+
+        // War/peace status
+        if (f.isEliminated) {
+            DrawScreenText("DEFEATED", factionX + 8, fy + 15, 0.7f, { 0.5f,0.3f,0.3f,0.6f });
+        }
+        else if (playerF && f.IsAtWarWith(playerF->id)) {
+            DrawScreenText("AT WAR", factionX + 8, fy + 15, 0.7f, { 0.9f,0.25f,0.2f,0.9f });
+        }
+        else {
+            DrawScreenText("Neutral", factionX + 8, fy + 15, 0.7f, { 0.5f,0.6f,0.5f,0.7f });
         }
     }
 

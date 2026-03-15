@@ -2,6 +2,7 @@
 
 #include <string>
 #include <memory>
+#include <vector>
 
 // Forward declarations - keeps compile times fast
 struct GLFWwindow;
@@ -89,4 +90,6 @@ private:
     float m_turnExecTimer = 0.0f; // timer for delays between moves
     bool m_cameraLocked = false;
     float m_savedCamDist = 0;     // saved zoom before lock
+    std::vector<std::string> m_aiFactionOrder;  
+    std::string m_currentAIFaction;             
 };

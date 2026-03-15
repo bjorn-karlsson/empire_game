@@ -741,6 +741,19 @@ void CampaignMap::UpdateArmyPositions(float dt){
                 // Target destroyed — stop
                 army.ClearPath();continue;
             }
+            // ── City proximity: enter city early if close enough ──
+            if (army.intent == Army::Intent::ENTER_CITY && army.targetCityProvId >= 0) {
+                Province* p = GetProvince(army.targetCityProvId);
+                if (p) {
+                    float d = glm::distance(glm::vec2(army.worldPosition.x, army.worldPosition.z),
+                        glm::vec2(p->cityPos.x, p->cityPos.z));
+                    if (d < 1.0f) {
+                        army.isMoving = false;
+                        TryGarrison(army, p);
+                        continue;
+                    }
+                }
+            }
         }
 
         if(!army.isMoving||army.fullPath.empty())continue;
@@ -1206,60 +1219,70 @@ void CampaignMap::SetNotification(const std::string&msg){
 // ═══════════════════════════════════════════════════════════════
 // AI — Intent-based aggressive behavior
 // ═══════════════════════════════════════════════════════════════
-void CampaignMap::RunAI(){
-    Logger::Info("Running AI turns...");
+void CampaignMap::RunAI() {
+    // Bulk version — runs all AI factions at once (used by TurnManager fallback)
+    for (const auto& fid : GetAIFactionIds())
+        RunAIForFaction(fid);
+}
 
-    Faction*player=GetPlayerFaction();
-    if(!player)return;
+void CampaignMap::RunAIForFaction(const std::string& factionId) {
+    Faction* faction = GetFaction(factionId);
+    Faction* player = GetPlayerFaction();
+    if (!faction || !player || faction->isPlayerControlled || faction->isEliminated)return;
+    if (!faction->IsAtWarWith(player->id))return;
 
-    for(auto&faction:m_factions){
-        if(faction.isPlayerControlled||faction.isEliminated)continue;
-        if(!faction.IsAtWarWith(player->id))continue;
+    Logger::Info("AI turn: %s", faction->name.c_str());
 
-        for(int aid:faction.armyIds){
-            Army*army=GetArmy(aid);
-            if(!army||army->isMoving||army->units.empty())continue;
+    for (int aid : faction->armyIds) {
+        Army* army = GetArmy(aid);
+        if (!army || army->isMoving || army->units.empty())continue;
+        if (!army->fullPath.empty())continue; // already has a scheduled path
 
-            // Find nearest player army to attack
-            float bestArmyDist=999;int bestArmyTarget=-1;
-            for(const auto&pa:m_armies){
-                if(pa.factionId!=player->id||pa.units.empty())continue;
-                float d=glm::distance(glm::vec2(army->worldPosition.x,army->worldPosition.z),
-                                      glm::vec2(pa.worldPosition.x,pa.worldPosition.z));
-                if(d<bestArmyDist){bestArmyDist=d;bestArmyTarget=pa.id;}
-            }
+        // Find nearest player army to attack
+        float bestArmyDist = 999; int bestArmyTarget = -1;
+        for (const auto& pa : m_armies) {
+            if (pa.factionId != player->id || pa.units.empty())continue;
+            float d = glm::distance(glm::vec2(army->worldPosition.x, army->worldPosition.z),
+                glm::vec2(pa.worldPosition.x, pa.worldPosition.z));
+            if (d < bestArmyDist) { bestArmyDist = d; bestArmyTarget = pa.id; }
+        }
 
-            // Find nearest player city to capture
-            float bestCityDist=999;int bestCityProv=-1;
-            for(const auto&p:m_provinces){
-                if(p.ownerFactionId!=player->id)continue;
-                float d=glm::distance(glm::vec2(army->worldPosition.x,army->worldPosition.z),
-                                      glm::vec2(p.cityPos.x,p.cityPos.z));
-                if(d<bestCityDist){bestCityDist=d;bestCityProv=p.id;}
-            }
+        // Find nearest player city to capture
+        float bestCityDist = 999; int bestCityProv = -1;
+        for (const auto& p : m_provinces) {
+            if (p.ownerFactionId != player->id)continue;
+            float d = glm::distance(glm::vec2(army->worldPosition.x, army->worldPosition.z),
+                glm::vec2(p.cityPos.x, p.cityPos.z));
+            if (d < bestCityDist) { bestCityDist = d; bestCityProv = p.id; }
+        }
 
-            // Prefer attacking armies over cities, but choose closest target
-            if(bestArmyDist<bestCityDist+3.0f && bestArmyTarget>=0){
-                // Attack nearest player army
-                Army*target=GetArmy(bestArmyTarget);
-                if(target){
-                    float d=glm::distance(glm::vec2(army->worldPosition.x,army->worldPosition.z),
-                                          glm::vec2(target->worldPosition.x,target->worldPosition.z));
-                    if(d<1.5f){
-                        StartBattle(army->id,target->id);
-                    } else {
-                        SchedulePathTo(*army,target->worldPosition,Army::Intent::ATTACK,target->id);
-                    }
+        if (bestArmyDist < bestCityDist + 3.0f && bestArmyTarget >= 0) {
+            Army* target = GetArmy(bestArmyTarget);
+            if (target) {
+                float d = glm::distance(glm::vec2(army->worldPosition.x, army->worldPosition.z),
+                    glm::vec2(target->worldPosition.x, target->worldPosition.z));
+                if (d < 1.5f) {
+                    StartBattle(army->id, target->id);
                 }
-            } else if(bestCityProv>=0){
-                // March toward nearest city
-                Province*p=GetProvince(bestCityProv);
-                if(p) SchedulePathTo(*army,p->cityPos,Army::Intent::ENTER_CITY,-1,p->id);
+                else {
+                    SchedulePathTo(*army, target->worldPosition, Army::Intent::ATTACK, target->id);
+                }
             }
+        }
+        else if (bestCityProv >= 0) {
+            Province* p = GetProvince(bestCityProv);
+            if (p) SchedulePathTo(*army, p->cityPos, Army::Intent::ENTER_CITY, -1, p->id);
         }
     }
 }
 
+std::vector<std::string> CampaignMap::GetAIFactionIds()const {
+    std::vector<std::string> ids;
+    for (const auto& f : m_factions)
+        if (!f.isPlayerControlled && !f.isEliminated)
+            ids.push_back(f.id);
+    return ids;
+}
 // ═══════════════════════════════════════════════════════════════
 // BATTLE DETECTION — when hostile armies are close
 // ═══════════════════════════════════════════════════════════════

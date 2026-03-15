@@ -492,8 +492,8 @@ void Renderer::RenderPathArrows(const CampaignMap&map){
 
     // Draw each turn's segment
     for(int turn=0;turn<(int)a->turnBreaks.size();turn++){
-        float segStart=(turn==0)?a->distanceTraveled:a->turnBreaks[std::max(0,turn-1)];
-        float segEnd=a->turnBreaks[turn];
+        float segStart = a->pathStartOffset + ((turn == 0) ? a->distanceTraveled : a->turnBreaks[std::max(0, turn - 1)]);
+        float segEnd = a->pathStartOffset + a->turnBreaks[turn];
         if(segEnd<=segStart+0.01f)continue;
 
         // Collect points: start interpolated point + all waypoints in range + end interpolated point

@@ -594,6 +594,7 @@ void CampaignMap::SchedulePathTo(Army& army, glm::vec3 dest,
     army.currentPathIndex=1;
     army.totalPathLength=totalLen;
     army.distanceTraveled=0;
+    army.pathStartOffset = 0;
     army.turnBreaks.clear();
     army.intent=intent;
     army.targetArmyId=targetArmy;
@@ -673,6 +674,7 @@ void CampaignMap::UpdateArmyPositions(float dt){
                                 glm::vec2(newPath[i-1].x,newPath[i-1].z));
                         army.totalPathLength=totalLen;
                         army.distanceTraveled=0;
+                        army.pathStartOffset = 0;
                         army.turnBreaks.clear();
                         float rem=totalLen,acc=0;
                         float rt=army.movementRange;
@@ -833,10 +835,11 @@ void CampaignMap::ProcessTurn(){
         a.distanceTraveled=0;
 
         if(!a.fullPath.empty()&&a.currentPathIndex<(int)a.fullPath.size()){
-            if(!a.turnBreaks.empty()){
-                float used=a.turnBreaks[0];
+            if (!a.turnBreaks.empty()) {
+                float used = a.turnBreaks[0];
+                a.pathStartOffset += used;   // ← accumulate distance already traveled
                 a.turnBreaks.erase(a.turnBreaks.begin());
-                for(auto&tb:a.turnBreaks)tb-=used;
+                for (auto& tb : a.turnBreaks)tb -= used;
             }
             // NOT setting isMoving — armies wait for explicit activation
             a.isMoving=false;

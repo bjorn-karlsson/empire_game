@@ -93,11 +93,12 @@ struct Army {
     std::vector<float> turnBreaks;
     float totalPathLength = 0.0f;
     float distanceTraveled = 0.0f;
+    float pathStartOffset = 0.0f;
 
     void ClearPath() {
-        fullPath.clear(); turnBreaks.clear(); currentPathIndex=0;
-        totalPathLength=0; distanceTraveled=0; isMoving=false;
-        intent=Intent::NONE; targetArmyId=-1; targetCityProvId=-1;
+        fullPath.clear(); turnBreaks.clear(); currentPathIndex = 0;
+        totalPathLength = 0; distanceTraveled = 0; pathStartOffset = 0; isMoving = false;
+        intent = Intent::NONE; targetArmyId = -1; targetCityProvId = -1;
     }
 
     // ─── Methods ──────────────────────────────────────────────

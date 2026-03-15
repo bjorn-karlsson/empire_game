@@ -85,7 +85,8 @@ public:
 
     // A* pathfinding on nav grid (returns world-space waypoints)
     std::vector<glm::vec3> FindPathWorld(const glm::vec3& from, glm::vec3 to,
-        int movingArmyId = -1, int targetArmyId = -1) const;
+        int movingArmyId = -1, int targetArmyId = -1,
+        int targetCityProvId = -1) const;
 
     // Movement mesh: flood-fill reachable cells from army position
     std::vector<ReachableCell> GetReachableCells(int armyId) const;

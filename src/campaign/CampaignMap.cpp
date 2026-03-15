@@ -27,9 +27,10 @@ bool CampaignMap::IsPointPassable(const glm::vec3&pos)const{
     for(auto&ob:m_obstacles)if(PtInPoly(pt,ob.vertices))return false;
     return IsPointOnLand(pos);
 }
-bool CampaignMap::IsPointOnLand(const glm::vec3&pos)const{
-    glm::vec2 pt(pos.x,pos.z);
-    for(auto&p:m_provinces)if(PtInPoly(pt,p.borderVertices))return true;
+bool CampaignMap::IsPointOnLand(const glm::vec3& pos)const {
+    glm::vec2 pt(pos.x, pos.z);
+    for (auto& p : m_provinces)if (PtInPoly(pt, p.borderVertices))return true;
+    for (auto& ft : m_foreignTerritories)if (PtInPoly(pt, ft.vertices))return true;
     return false;
 }
 
@@ -51,40 +52,36 @@ void CampaignMap::BuildNavGrid(){
 // A* PATHFINDING ON NAV GRID
 // ═══════════════════════════════════════════════════════════════
 std::vector<glm::vec3> CampaignMap::FindPathWorld(const glm::vec3& from, glm::vec3 to,
-	int movingArmyId, int targetArmyId)const 
+    int movingArmyId, int targetArmyId, int targetCityProvId)const
 {
     int sx = m_navGrid.toGX(from.x), sz = m_navGrid.toGZ(from.z);
     int ex = m_navGrid.toGX(to.x), ez = m_navGrid.toGZ(to.z);
 
     if (!m_navGrid.inBounds(sx, sz) || !m_navGrid.inBounds(ex, ez))return{};
 
-    // ── Build dynamic obstacle set (armies + cities) ──
+    // ── Build dynamic obstacle set ──
     auto key = [](int x, int z)->int {return x * NavGrid::H + z; };
     std::unordered_set<int> dynBlocked;
-    // Block cells around other armies (1-cell radius = 3x3)
+
+    // Block cells occupied by OTHER armies (not the one moving, not its target)
     for (const auto& a : m_armies) {
         if (a.id == movingArmyId || a.id == targetArmyId)continue;
-        if (a.units.empty())continue;
+        if (a.units.empty() || a.isGarrisoned)continue;
         int ax = m_navGrid.toGX(a.worldPosition.x), az = m_navGrid.toGZ(a.worldPosition.z);
-        for (int dx = -1; dx <= 1; dx++)for (int dz = -1; dz <= 1; dz++) {
-            int bx = ax + dx, bz = az + dz;
-            if (m_navGrid.inBounds(bx, bz))dynBlocked.insert(key(bx, bz));
-        }
-    }
-    // Block cells around cities (2-cell radius = 5x5)
-    for (const auto& p : m_provinces) {
-        int cx = m_navGrid.toGX(p.cityPos.x), cz = m_navGrid.toGZ(p.cityPos.z);
-        for (int dx = -2; dx <= 2; dx++)for (int dz = -2; dz <= 2; dz++) {
-            int bx = cx + dx, bz = cz + dz;
-            if (m_navGrid.inBounds(bx, bz))dynBlocked.insert(key(bx, bz));
-        }
+        dynBlocked.insert(key(ax, az));
     }
 
-    // Never block start or destination (we're already here / going there)
+    // Block city cells (so armies path around, not through)
+    // Exclude the target city (so army can enter it)
+    for (const auto& p : m_provinces) {
+        if (p.id == targetCityProvId)continue;
+        int cx = m_navGrid.toGX(p.cityPos.x), cz = m_navGrid.toGZ(p.cityPos.z);
+        dynBlocked.insert(key(cx, cz));
+    }
+
+    // Never block start or destination
     dynBlocked.erase(key(sx, sz));
     dynBlocked.erase(key(ex, ez));
-
-
 
     // If destination is impassable (terrain), snap to nearest passable+unblocked cell
     if (!m_navGrid.passable[ex][ez]) {
@@ -101,85 +98,97 @@ std::vector<glm::vec3> CampaignMap::FindPathWorld(const glm::vec3& from, glm::ve
         to = glm::vec3(m_navGrid.toWX(ex), 0, m_navGrid.toWZ(ez));
     }
 
+    // If destination is dynamically blocked (army/city in the way), also snap
+    if (dynBlocked.count(key(ex, ez))) {
+        float bestD = 999; int bx = ex, bz = ez;
+        for (int dx = -10; dx <= 10; dx++)for (int dz = -10; dz <= 10; dz++) {
+            int cx = ex + dx, cz = ez + dz;
+            if (!m_navGrid.inBounds(cx, cz) || !m_navGrid.passable[cx][cz])continue;
+            if (dynBlocked.count(key(cx, cz)))continue;
+            float d = std::sqrt((float)(dx * dx + dz * dz));
+            if (d < bestD) { bestD = d; bx = cx; bz = cz; }
+        }
+        if (bestD > 998)return{};
+        ex = bx; ez = bz;
+        to = glm::vec3(m_navGrid.toWX(ex), 0, m_navGrid.toWZ(ez));
+    }
+
     if (sx == ex && sz == ez)return{ from,to };
 
     // A* with 8-directional movement
-    struct Node{int x,z;float g,f;};
-    auto heur=[&](int x,int z)->float{return std::sqrt((float)((x-ex)*(x-ex)+(z-ez)*(z-ez)))*NavGrid::CELL;};
+    struct Node { int x, z; float g, f; };
+    auto heur = [&](int x, int z)->float {return std::sqrt((float)((x - ex) * (x - ex) + (z - ez) * (z - ez))) * NavGrid::CELL; };
 
-    auto cmp=[](const Node&a,const Node&b){return a.f>b.f;};
-    std::priority_queue<Node,std::vector<Node>,decltype(cmp)> open(cmp);
-    std::unordered_map<int,float> bestG;
-    std::unordered_map<int,int> parent;
+    auto cmp = [](const Node& a, const Node& b) {return a.f > b.f; };
+    std::priority_queue<Node, std::vector<Node>, decltype(cmp)> open(cmp);
+    std::unordered_map<int, float> bestG;
+    std::unordered_map<int, int> parent;
 
-    open.push({sx,sz,0,heur(sx,sz)});
-    bestG[key(sx,sz)]=0;
-    parent[key(sx,sz)]=-1;
+    open.push({ sx,sz,0,heur(sx,sz) });
+    bestG[key(sx, sz)] = 0;
+    parent[key(sx, sz)] = -1;
 
-    int dx8[]={-1,0,1,-1,1,-1,0,1};
-    int dz8[]={-1,-1,-1,0,0,1,1,1};
-    float dcost[]={1.414f,1,1.414f,1,1,1.414f,1,1.414f};
+    int dx8[] = { -1,0,1,-1,1,-1,0,1 };
+    int dz8[] = { -1,-1,-1,0,0,1,1,1 };
+    float dcost[] = { 1.414f,1,1.414f,1,1,1.414f,1,1.414f };
 
-    bool found=false;
-    while(!open.empty()){
-        Node cur=open.top();open.pop();
-        if(cur.x==ex&&cur.z==ez){found=true;break;}
+    bool found = false;
+    while (!open.empty()) {
+        Node cur = open.top(); open.pop();
+        if (cur.x == ex && cur.z == ez) { found = true; break; }
 
-        int ck=key(cur.x,cur.z);
-        if(cur.g>bestG[ck]+0.001f)continue; // stale
+        int ck = key(cur.x, cur.z);
+        if (cur.g > bestG[ck] + 0.001f)continue;
 
-        for(int d=0;d<8;d++){
-            int nx=cur.x+dx8[d],nz=cur.z+dz8[d];
+        for (int d = 0; d < 8; d++) {
+            int nx = cur.x + dx8[d], nz = cur.z + dz8[d];
             if (!m_navGrid.inBounds(nx, nz) || !m_navGrid.passable[nx][nz])continue;
-            if (dynBlocked.count(key(nx, nz)))continue; // ← dynamic obstacles
+            if (dynBlocked.count(key(nx, nz)))continue;
 
-            // Check diagonal doesn't cut corner
-            if(dx8[d]!=0&&dz8[d]!=0){
-                if(!m_navGrid.passable[cur.x+dx8[d]][cur.z]||!m_navGrid.passable[cur.x][cur.z+dz8[d]])
+            if (dx8[d] != 0 && dz8[d] != 0) {
+                if (!m_navGrid.passable[cur.x + dx8[d]][cur.z] || !m_navGrid.passable[cur.x][cur.z + dz8[d]])
                     continue;
             }
 
-            float ng=cur.g+dcost[d]*NavGrid::CELL;
-            int nk=key(nx,nz);
-            if(bestG.find(nk)==bestG.end()||ng<bestG[nk]){
-                bestG[nk]=ng;
-                parent[nk]=ck;
-                open.push({nx,nz,ng,ng+heur(nx,nz)});
+            float ng = cur.g + dcost[d] * NavGrid::CELL;
+            int nk = key(nx, nz);
+            if (bestG.find(nk) == bestG.end() || ng < bestG[nk]) {
+                bestG[nk] = ng;
+                parent[nk] = ck;
+                open.push({ nx,nz,ng,ng + heur(nx,nz) });
             }
         }
     }
 
-    if(!found)return{};
+    if (!found)return{};
 
     // Reconstruct path
     std::vector<glm::vec3> path;
-    int ck=key(ex,ez);
-    while(ck!=-1){
-        int px=ck/NavGrid::H, pz=ck%NavGrid::H;
-        path.push_back(m_navGrid.toWorld(px,pz));
-        ck=parent[ck];
+    int ck = key(ex, ez);
+    while (ck != -1) {
+        int px = ck / NavGrid::H, pz = ck % NavGrid::H;
+        path.push_back(m_navGrid.toWorld(px, pz));
+        ck = parent[ck];
     }
-    std::reverse(path.begin(),path.end());
+    std::reverse(path.begin(), path.end());
 
-    // Smooth: replace first/last with exact positions
-    if(!path.empty()){path.front()=glm::vec3(from.x,0,from.z);path.back()=glm::vec3(to.x,0,to.z);}
+    if (!path.empty()) { path.front() = glm::vec3(from.x, 0, from.z); path.back() = glm::vec3(to.x, 0, to.z); }
 
     // Simplify: remove collinear waypoints
-    if(path.size()>2){
+    if (path.size() > 2) {
         std::vector<glm::vec3> simplified;
         simplified.push_back(path[0]);
-        for(int i=1;i<(int)path.size()-1;i++){
-            glm::vec2 d1=glm::normalize(glm::vec2(path[i].x-path[i-1].x,path[i].z-path[i-1].z));
-            glm::vec2 d2=glm::normalize(glm::vec2(path[i+1].x-path[i].x,path[i+1].z-path[i].z));
-            if(glm::dot(d1,d2)<0.98f) simplified.push_back(path[i]); // keep turns
+        for (int i = 1; i < (int)path.size() - 1; i++) {
+            glm::vec2 d1 = glm::normalize(glm::vec2(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z));
+            glm::vec2 d2 = glm::normalize(glm::vec2(path[i + 1].x - path[i].x, path[i + 1].z - path[i].z));
+            if (glm::dot(d1, d2) < 0.98f) simplified.push_back(path[i]);
         }
         simplified.push_back(path.back());
-        path=simplified;
+        path = simplified;
     }
 
     return path;
 }
-
 // ═══════════════════════════════════════════════════════════════
 // FLOOD-FILL REACHABLE CELLS (Dijkstra from army position)
 // ═══════════════════════════════════════════════════════════════
@@ -628,7 +637,7 @@ void CampaignMap::HandleRightClick(const glm::vec3&worldPos){
 void CampaignMap::SchedulePathTo(Army& army, glm::vec3 dest,
     Army::Intent intent, int targetArmy, int targetCity)
 {
-    auto path = FindPathWorld(army.worldPosition, dest, army.id, targetArmy);
+    auto path = FindPathWorld(army.worldPosition, dest, army.id, targetArmy, targetCity);
     if(path.size()<2){Logger::Warning("No path found!");return;}
 
     float totalLen=0;
@@ -708,7 +717,7 @@ void CampaignMap::UpdateArmyPositions(float dt){
                     glm::vec2(target->worldPosition.x,target->worldPosition.z));
                 if(drift>0.5f){
                     // Target moved significantly — recalculate entire path from current pos
-                    auto newPath = FindPathWorld(army.worldPosition, target->worldPosition, army.id, army.targetArmyId);
+                    auto newPath = FindPathWorld(army.worldPosition, target->worldPosition, army.id, army.targetArmyId, army.targetCityProvId);
                     if(newPath.size()>=2){
                         army.fullPath=newPath;
                         army.currentPathIndex=1;
@@ -788,7 +797,7 @@ void CampaignMap::UpdateArmyPositions(float dt){
 
 // ─── Try to garrison an army in a city (auto-merge if occupied) ──
 void CampaignMap::TryGarrison(Army& army, Province* p) {
-    if (!p)return;
+    if (!p) { army.ClearPath(); return; }
 
     // Check if another army is already garrisoned here
     Army* existing = nullptr;
@@ -800,42 +809,31 @@ void CampaignMap::TryGarrison(Army& army, Province* p) {
     }
 
     if (existing) {
-        // Auto-merge as many units as possible into the garrisoned army
+        // Auto-merge as many units as possible
         while (!army.units.empty() && existing->CanAddUnit()) {
             existing->units.push_back(std::move(army.units.back()));
             army.units.pop_back();
         }
-
         if (army.units.empty()) {
-            // All units merged — arriving army is absorbed
             SetNotification("Merged into garrison! (" + std::to_string((int)existing->units.size()) + " units)");
-            Logger::Info("Army '%s' fully merged into '%s' in %s",
+            Logger::Info("Army '%s' merged into '%s' in %s",
                 army.generalName.c_str(), existing->generalName.c_str(), p->cityName.c_str());
-            // Mark for destruction (ClearPath + empty units will be cleaned up)
             army.ClearPath();
             DestroyArmy(army.id);
         }
         else {
-            // Overflow units stay outside
+            // Overflow stays outside
             army.ClearPath();
             army.isGarrisoned = false;
-            // Nudge outside the city so they're not stuck on the blocked cell
-            glm::vec2 away = glm::normalize(glm::vec2(
-                army.worldPosition.x - p->cityPos.x,
-                army.worldPosition.z - p->cityPos.z));
-            // If army came from same spot, pick a default direction
-            if (glm::length(away) < 0.01f)away = { 1,0 };
-            army.worldPosition.x = p->cityPos.x + away.x * 1.0f;
-            army.worldPosition.z = p->cityPos.z + away.y * 1.0f;
-            army.worldPosition.y = 0;
+            glm::vec2 dir(army.worldPosition.x - p->cityPos.x, army.worldPosition.z - p->cityPos.z);
+            if (glm::length(dir) < 0.01f)dir = { 1,0 };
+            dir = glm::normalize(dir);
+            army.worldPosition = { p->cityPos.x + dir.x * 1.2f, 0, p->cityPos.z + dir.y * 1.2f };
             UpdateArmyProvince(army);
-            SetNotification("City full! " + std::to_string((int)army.units.size()) + " units remain outside");
-            Logger::Info("Army '%s' overflow: %d units outside %s",
-                army.generalName.c_str(), (int)army.units.size(), p->cityName.c_str());
+            SetNotification("City full! " + std::to_string((int)army.units.size()) + " units outside");
         }
     }
     else {
-        // City is empty — garrison normally
         army.isGarrisoned = true;
         army.worldPosition = p->cityPos;
         army.ClearPath();
@@ -844,7 +842,6 @@ void CampaignMap::TryGarrison(Army& army, Province* p) {
         CheckCityOccupation(army);
     }
 }
-
 // ─── Handle what happens when an army reaches its destination ──
 void CampaignMap::HandleArmyArrival(Army& army){
     army.isMoving=false;

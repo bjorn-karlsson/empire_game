@@ -84,7 +84,8 @@ public:
     const NavGrid& GetNavGrid() const { return m_navGrid; }
 
     // A* pathfinding on nav grid (returns world-space waypoints)
-    std::vector<glm::vec3> FindPathWorld(const glm::vec3& from, const glm::vec3& to) const;
+    std::vector<glm::vec3> FindPathWorld(const glm::vec3& from, glm::vec3 to,
+        int movingArmyId = -1, int targetArmyId = -1) const;
 
     // Movement mesh: flood-fill reachable cells from army position
     std::vector<ReachableCell> GetReachableCells(int armyId) const;
@@ -146,6 +147,7 @@ private:
     void UpdateArmyProvince(Army&);
     void CheckForBattles(); // legacy, no longer auto-called
     void HandleArmyArrival(Army& army);
+    void TryGarrison(Army& army, Province* p);  // ← ADD
     void SchedulePathTo(Army& army, glm::vec3 dest, Army::Intent intent,
                         int targetArmy=-1, int targetCity=-1);
     void SetNotification(const std::string& msg);

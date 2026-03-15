@@ -53,4 +53,5 @@ private:
     float m_predictedOutcome=0.5f;
     bool m_retreated=false;
     float m_timer=0;
+    bool m_playerIsAttacker = true;
 };

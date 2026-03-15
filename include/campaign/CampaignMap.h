@@ -13,8 +13,8 @@ struct BattleSetupData { Army* attacker = nullptr; Army* defender = nullptr; int
 struct BattleResult {
     bool attackerWon = false;
     int attackerCasualties = 0, defenderCasualties = 0, provinceId = -1;
-    int attackerId = -1, defenderId = -1;   // ← ADD: track who fought
-    bool isRetreat = false;               // ← ADD: attacker chose to retreat
+    int attackerId = -1, defenderId = -1;
+    bool isRetreat = false;
 };
 struct TerrainObstacle {
     std::string name, type;

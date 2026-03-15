@@ -33,6 +33,10 @@ void BattleScene::Setup(const BattleSetupData&data,const CampaignMap&map){
     float total=atkPower+defPower;
     m_predictedOutcome=(total>0)?atkPower/total:0.5f;
 
+    // Determine which side the player is on
+    const Faction* atkF = map.GetFaction(data.attacker->factionId);
+    m_playerIsAttacker = (atkF && atkF->isPlayerControlled);
+
     Logger::Info("Pre-battle: %s (%d) vs %s (%d) — prediction: %.0f%%",
         m_attackerSnap.generalName.c_str(),m_attackerSnap.totalManpower,
         m_defenderSnap.generalName.c_str(),m_defenderSnap.totalManpower,
@@ -77,8 +81,8 @@ void BattleScene::DoAutoResolve(){
     if(!m_battleData.attacker||!m_battleData.defender)return;
 
     m_result=m_resolver.Resolve(*m_battleData.attacker,*m_battleData.defender);
-    m_result.attackerId = m_battleData.attacker->id;    // ← ADD
-    m_result.defenderId = m_battleData.defender->id;    // ← ADD
+    m_result.attackerId = m_battleData.attacker ? m_battleData.attacker->id : -1;
+    m_result.defenderId = m_battleData.defender ? m_battleData.defender->id : -1;
 
     // Update snapshots with post-battle
     for(int i=0;i<(int)m_battleData.attacker->units.size()&&i<(int)m_attackerSnap.units.size();i++){
@@ -96,13 +100,22 @@ void BattleScene::DoAutoResolve(){
 
 void BattleScene::DoRetreat() {
     m_retreated = true;
-    m_result.attackerWon = false;
-    m_result.isRetreat = true;
     m_result.attackerCasualties = 0;
     m_result.defenderCasualties = 0;
+
+    if (m_playerIsAttacker) {
+        // Player is attacker, retreating → attacker loses
+        m_result.attackerWon = false;
+    }
+    else {
+        // Player is defender, retreating → attacker wins
+        m_result.attackerWon = true;
+    }
+
     m_result.attackerId = m_battleData.attacker ? m_battleData.attacker->id : -1;
     m_result.defenderId = m_battleData.defender ? m_battleData.defender->id : -1;
+    m_result.isRetreat = true;
 
     m_phase = BattlePhase::DONE;
-    Logger::Info("Army retreated! (no casualties)");
+    Logger::Info("Player retreated! (%s)", m_playerIsAttacker ? "was attacker" : "was defender");
 }

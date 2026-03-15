@@ -937,8 +937,10 @@ void CampaignMap::ProcessTurn(){
         f.UpdateEconomy(inc,exp);
     }
 
+
     // Restore movement and shift turn breaks — but DON'T start moving
     for(auto&a:m_armies){
+
         a.movementRange=a.movementRangeMax;
         a.distanceTraveled=0;
 
@@ -954,11 +956,13 @@ void CampaignMap::ProcessTurn(){
             Logger::Info("Army '%s' has scheduled path (%d waypoints left)",
                 a.generalName.c_str(),(int)a.fullPath.size()-a.currentPathIndex);
         }
+
     }
 }
 
 // Start the next scheduled army that has fatigue remaining. Returns army ID or -1.
 int CampaignMap::StartNextScheduledArmy(const std::string& factionId){
+
     for(auto&a:m_armies){
         if(a.factionId!=factionId)continue;
         if(a.isMoving)continue;
@@ -1272,6 +1276,13 @@ void CampaignMap::RunAIForFaction(const std::string& factionId) {
         else if (bestCityProv >= 0) {
             Province* p = GetProvince(bestCityProv);
             if (p) SchedulePathTo(*army, p->cityPos, Army::Intent::ENTER_CITY, -1, p->id);
+        }
+    }
+
+    // Stop all armies so Game.cpp can activate them one at a time
+    for (auto& a : m_armies) {
+        if (a.factionId == factionId && a.isMoving && !a.fullPath.empty()) {
+            a.isMoving = false;
         }
     }
 }

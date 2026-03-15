@@ -38,12 +38,17 @@ public:
 
     void OnResize(float aspectRatio);
 
+    // Turn execution camera control
+    void SetTarget(const glm::vec3& t) { m_target = t; m_targetPosition = t; }
+    void SetDistance(float d) { m_distance = d; m_targetDistance = d; }
+    float GetDistance() const { return m_distance; }
+
 private:
     void RecalculateVectors();
 
     // Camera position and orientation
-    glm::vec3 m_position  = {0.0f, 12.0f, 12.0f};  // ETW-style angle
-    glm::vec3 m_target    = {0.0f, 0.0f, 3.0f};    // Center of France
+    glm::vec3 m_position  = {0.0f, 12.0f, 12.0f};
+    glm::vec3 m_target    = {0.0f, 0.0f, 1.5f};    // Center of France
     glm::vec3 m_up        = {0.0f, 1.0f, 0.0f};
 
     // Orbit parameters

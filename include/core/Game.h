@@ -22,6 +22,15 @@ enum class GameState {
     PAUSED
 };
 
+// Turn execution phases
+enum class TurnExecPhase {
+    IDLE,           // player is playing
+    PLAYER_MOVES,   // executing player's scheduled movements
+    AI_FACTION,     // executing one AI faction's moves
+    WAITING_MOVE,   // waiting for current army to finish moving
+    DONE            // all factions done, advance turn
+};
+
 // ─── Core Game Class ──────────────────────────────────────────
 // Owns the game loop, window, and all major subsystems.
 // Think of this as the "director" — it doesn't do rendering
@@ -71,4 +80,13 @@ private:
 
     // Timing
     float m_lastFrameTime = 0.0f;
+
+    // Turn execution state machine
+    TurnExecPhase m_turnPhase = TurnExecPhase::IDLE;
+    int m_execFactionIdx = 0;     // which AI faction we're processing
+    int m_execArmyIdx = 0;        // which army within that faction
+    int m_followArmyId = -1;      // camera follows this army
+    float m_turnExecTimer = 0.0f; // timer for delays between moves
+    bool m_cameraLocked = false;
+    float m_savedCamDist = 0;     // saved zoom before lock
 };

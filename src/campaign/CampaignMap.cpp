@@ -194,23 +194,61 @@ void CampaignMap::GenerateTestMap(){
      f.color={0.28f,0.38f,0.75f};f.isPlayerControlled=true;f.treasury=12000;
      m_factions.push_back(f);}
 
+    // ═══════════════════════════════════════════════════════════
+    // FRANCE MAP — Geographically accurate province outlines
+    // Coordinate system: X=west(-)/east(+), Z=north(-)/south(+)
+    // Coastline vertices (c=coast), Internal borders (i=internal)
+    // ═══════════════════════════════════════════════════════════
     #define V(x,z) glm::vec3(x,0.0f,z)
-    glm::vec3 cBrest=V(-8,-1.5),cStMalo=V(-5.5,-4),cCherb=V(-4,-5),
-        cLeHav=V(-2.5,-4.8),cDiep=V(-0.8,-4.5),cCalais=V(0.8,-5),
-        cDunk=V(2.2,-4.8),cLille=V(2.8,-3.8),cMetz=V(5,-3.5),
-        cStras=V(6.5,-2.5),cBasel=V(6.8,-0.8),cGenev=V(6.5,0.8),
-        cAlps=V(7,2),cNice=V(6.5,4),cToulon=V(5.5,5.5),cMars=V(4.5,6.5),
-        cMontp=V(2.5,7.5),cNarb=V(1,8.5),cPerp=V(-0.5,9.5),
-        cPyrE=V(-1.5,10),cPyrM=V(-3,10),cPyrW=V(-4.5,9.5),
-        cBayo=V(-5.5,8.5),cBiarr=V(-6.5,7.5),cBordC=V(-6.5,5.5),
-        cRoch=V(-6.5,3),cNant=V(-6.5,0.5),cQuimp=V(-8.5,-0.5);
-    glm::vec3 iNB=V(-4.8,-2.5),iNP=V(-1.2,-2.2),iPC=V(1.8,-2.8),
-        iCA=V(4.5,-2),iAB=V(5,-0.3),iBD=V(5,1.5),iDP=V(5,3.8),
-        iPL=V(2.5,5.8),iLG=V(-2,7.5),iAG=V(-4.5,7.5),
-        iAP=V(-5,4.5),iPLo=V(-3.5,1.5),iBP=V(-5,0.5),
-        iLP=V(-1.2,0.2),iPCh=V(1.8,-0.3),iLB=V(0.8,1.5),
-        iLA=V(-0.8,2.8),iABu=V(2.5,3),iALa=V(0.5,5.5),
-        iAPo=V(-2.5,4),iNL=V(-3.2,-0.5);
+    // ── Coastline (clockwise from Dunkirk) ──
+    glm::vec3
+        // North coast (Channel)
+        cDunk=V(2.5,-5.5), cCalais=V(1.2,-5.8), cBoul=V(0.2,-5.3),
+        cDiep=V(-1.0,-4.8), cLeHav=V(-2.2,-4.5), cCherb=V(-3.8,-5.2),
+        // Brittany peninsula
+        cStMalo=V(-4.8,-3.8), cStBri=V(-6.5,-3.5), cBrest=V(-8.2,-2.5),
+        cQuimp=V(-7.8,-1.2), cLori=V(-6.8,-0.5),
+        // West coast (Atlantic)
+        cNant=V(-5.8,0.5), cRoch=V(-5.5,2.5), cBordW=V(-5.0,4.0),
+        cBordS=V(-4.5,5.5),
+        // Southwest coast (Bay of Biscay)
+        cBiarr=V(-4.2,6.8), cBayo=V(-3.8,7.3),
+        // Pyrenees border (south)
+        cPyrW=V(-3.0,7.8), cPyrM=V(-1.0,8.2), cPyrE=V(0.8,8.0),
+        cPerp=V(1.5,7.5),
+        // Mediterranean coast
+        cNarb=V(2.5,7.2), cMontp=V(3.5,6.8), cMars=V(4.8,6.5),
+        cToulon=V(5.5,6.0), cNice=V(6.8,5.0),
+        // Alps/East border (going north)
+        cAlpS=V(7.0,3.5), cGenev=V(6.5,1.5), cJura=V(6.2,0.5),
+        cBasel=V(6.5,-0.5), cStras=V(6.5,-2.0),
+        cMetz=V(5.5,-3.5), cLille=V(3.0,-4.5);
+    // ── Internal border junctions ──
+    glm::vec3
+        // Row 1: north tier
+        iNrmBrt=V(-4.5,-2.5),  // Normandy-Brittany
+        iNrmIdF=V(-1.5,-2.5),  // Normandy-IleDF
+        iPicChm=V(2.0,-3.2),   // Picardy-Champagne
+        // Row 2: mid-north
+        iIdFLoi=V(-2.0,-0.5),  // IleDF-Loire
+        iIdFBur=V(0.5,-0.5),   // IleDF-Burgundy
+        iChmAlsW=V(4.2,-2.0),  // Champagne-Alsace west
+        iAlsBurN=V(4.8,-0.5),  // Alsace-Burgundy north
+        // Row 3: center
+        iBrtPoi=V(-5.0,1.0),   // Brittany-Poitou
+        iLoiPoi=V(-3.0,1.5),   // Loire-Poitou
+        iLoiAuv=V(-0.5,1.5),   // Loire-Auvergne
+        iBurDau=V(3.5,1.0),    // Burgundy-Dauphine
+        iDauAlp=V(5.5,1.5),    // Dauphine-Alps junction
+        // Row 4: south-center
+        iPoiAqu=V(-3.5,3.5),   // Poitou-Aquitaine
+        iAuvLan=V(1.0,4.5),    // Auvergne-Languedoc
+        iAuvPro=V(3.0,4.0),    // Auvergne-Provence
+        iDauPro=V(5.0,3.5),    // Dauphine-Provence
+        // Row 5: south
+        iAquGas=V(-3.0,5.5),   // Aquitaine-Gascony
+        iAquLan=V(-0.5,6.0),   // Aquitaine-Languedoc
+        iLanPro=V(3.5,5.5);    // Languedoc-Provence
     #undef V
 
     auto mkP=[&](int id,const std::string&nm,const std::string&cn,
@@ -225,22 +263,54 @@ void CampaignMap::GenerateTestMap(){
         p.color=bc;return p;
     };
 
-    m_provinces.push_back(mkP(0,"Ile-de-France","Paris",{iNP,iPC,iPCh,iLB,iLA,iLP,iNL},500,false,true));
-    m_provinces.push_back(mkP(1,"Normandy","Rouen",{cCherb,cLeHav,cDiep,iNP,iNL,iNB,cStMalo},300,true,false));
-    m_provinces.push_back(mkP(2,"Brittany","Rennes",{cStMalo,iNB,iNL,iPLo,iBP,cNant,cQuimp,cBrest},200,true,false,"hills"));
-    m_provinces.push_back(mkP(3,"Picardy","Amiens",{cDiep,cCalais,cDunk,cLille,iPC,iNP},280,true,false));
-    m_provinces.push_back(mkP(4,"Champagne","Reims",{iPC,cLille,cMetz,iCA,iAB,iPCh},250,false,false,"hills"));
-    m_provinces.push_back(mkP(5,"Alsace-Lorraine","Strasbourg",{iCA,cMetz,cStras,cBasel,cGenev,iBD,iAB},220,false,false,"hills"));
-    m_provinces.push_back(mkP(6,"Loire Valley","Tours",{iNL,iLP,iLA,iAPo,iPLo},320,false,false));
-    m_provinces.push_back(mkP(7,"Burgundy","Dijon",{iPCh,iAB,iBD,iABu,iLB},280,false,false,"hills"));
-    m_provinces.push_back(mkP(8,"Poitou","Poitiers",{iBP,iPLo,iAPo,iAP,cRoch,cNant},180,true,false,"marsh"));
-    m_provinces.push_back(mkP(9,"Aquitaine","Bordeaux",{iAP,iAPo,iALa,iLG,iAG,cBiarr,cBordC,cRoch},350,true,false));
-    m_provinces[9].cityPos={-5,0,5.5f};
-    m_provinces.push_back(mkP(10,"Languedoc","Toulouse",{iALa,iPL,cMontp,cNarb,cPerp,cPyrE,iLG},280,true,false));
-    m_provinces.push_back(mkP(11,"Provence","Marseille",{iDP,cNice,cToulon,cMars,cMontp,iPL},300,true,false));
-    m_provinces.push_back(mkP(12,"Dauphine","Grenoble",{iBD,cGenev,cAlps,cNice,iDP,iABu},180,false,false,"mountains"));
-    m_provinces.push_back(mkP(13,"Auvergne","Clermont",{iLA,iLB,iABu,iDP,iPL,iALa,iAPo},150,false,false,"mountains"));
-    m_provinces.push_back(mkP(14,"Gascony","Bayonne",{iAG,iLG,cPyrE,cPyrM,cPyrW,cBayo,cBiarr},120,true,false,"mountains"));
+    // Provinces (ordered to tile France from north to south)
+    // 0: Île-de-France (Paris) — center-north
+    m_provinces.push_back(mkP(0,"Ile-de-France","Paris",
+        {iNrmIdF,iPicChm,iIdFBur,iLoiAuv,iIdFLoi},500,false,true));
+    // 1: Normandy — northwest coast
+    m_provinces.push_back(mkP(1,"Normandy","Rouen",
+        {cCherb,cLeHav,cDiep,iNrmIdF,iIdFLoi,iNrmBrt,cStMalo},300,true,false));
+    // 2: Brittany — far west peninsula
+    m_provinces.push_back(mkP(2,"Brittany","Rennes",
+        {cStMalo,iNrmBrt,iIdFLoi,iBrtPoi,cNant,cLori,cQuimp,cBrest,cStBri},200,true,false,"hills"));
+    // 3: Picardy — northeast coast
+    m_provinces.push_back(mkP(3,"Picardy","Amiens",
+        {cDiep,cBoul,cCalais,cDunk,cLille,iPicChm,iNrmIdF},280,true,false));
+    // 4: Champagne — north-center-east
+    m_provinces.push_back(mkP(4,"Champagne","Reims",
+        {iPicChm,cLille,cMetz,iChmAlsW,iAlsBurN,iIdFBur},250,false,false));
+    // 5: Alsace-Lorraine — far east
+    m_provinces.push_back(mkP(5,"Alsace-Lorraine","Strasbourg",
+        {iChmAlsW,cMetz,cStras,cBasel,cJura,iDauAlp,iBurDau,iAlsBurN},220,false,false,"hills"));
+    // 6: Loire Valley — center-west
+    m_provinces.push_back(mkP(6,"Loire Valley","Tours",
+        {iIdFLoi,iLoiAuv,iLoiPoi},320,false,false));
+    m_provinces[6].cityPos={-1.5f,0,0.5f};
+    // 7: Burgundy — center-east
+    m_provinces.push_back(mkP(7,"Burgundy","Dijon",
+        {iIdFBur,iAlsBurN,iBurDau,iAuvPro,iLoiAuv},280,false,false,"hills"));
+    // 8: Poitou — west coast
+    m_provinces.push_back(mkP(8,"Poitou","Poitiers",
+        {iBrtPoi,iLoiPoi,iPoiAqu,cBordW,cRoch,cNant},180,true,false,"marsh"));
+    // 9: Aquitaine — southwest
+    m_provinces.push_back(mkP(9,"Aquitaine","Bordeaux",
+        {iPoiAqu,iAquLan,iAquGas,cBordS,cBordW},350,true,false));
+    m_provinces[9].cityPos={-3.8f,0,4.5f};
+    // 10: Languedoc — south-center
+    m_provinces.push_back(mkP(10,"Languedoc","Toulouse",
+        {iAquLan,iAuvLan,iLanPro,cMontp,cNarb,cPerp,cPyrE,cPyrM,cPyrW,iAquGas},280,true,false));
+    // 11: Provence — southeast coast
+    m_provinces.push_back(mkP(11,"Provence","Marseille",
+        {iLanPro,iAuvPro,iDauPro,cNice,cToulon,cMars,cMontp},300,true,false));
+    // 12: Dauphiné — east mountains
+    m_provinces.push_back(mkP(12,"Dauphine","Grenoble",
+        {iBurDau,iDauAlp,cGenev,cAlpS,cNice,iDauPro,iAuvPro},180,false,false,"mountains"));
+    // 13: Auvergne — center mountains
+    m_provinces.push_back(mkP(13,"Auvergne","Clermont",
+        {iLoiAuv,iAuvPro,iLanPro,iAuvLan,iAquLan,iPoiAqu,iLoiPoi},150,false,false,"mountains"));
+    // 14: Gascony — far south (Pyrenees)
+    m_provinces.push_back(mkP(14,"Gascony","Bayonne",
+        {iAquGas,cPyrW,cBayo,cBiarr,cBordS},120,true,false,"mountains"));
 
     for(auto&p:m_provinces){float t=(float)(p.id%5)*0.025f;p.color.r+=t-0.05f;p.color.g+=t*0.3f;}
 
@@ -251,15 +321,74 @@ void CampaignMap::GenerateTestMap(){
     adj(7,12);adj(7,13);adj(8,9);adj(8,13);adj(9,10);adj(9,14);
     adj(10,11);adj(10,13);adj(10,14);adj(11,12);adj(11,13);adj(12,13);
 
-    // Terrain obstacles
+    // Terrain obstacles (repositioned to match new map)
     #define V(x,z) glm::vec3(x,0.0f,z)
-    m_obstacles.push_back({"Alps","mountain",{V(6.2f,0.5f),V(7.2f,1),V(7.5f,2.5f),V(7,3.5f),V(6.3f,3.2f),V(5.8f,2),V(5.8f,1)},{},{0.55f,0.50f,0.45f}});
-    m_obstacles.push_back({"Pyrenees","mountain",{V(-5,9),V(-3.5f,9.5f),V(-1.8f,9.8f),V(-0.8f,9.3f),V(-0.5f,10.2f),V(-1.8f,10.5f),V(-3.5f,10.5f),V(-5.2f,10.2f)},{},{0.50f,0.45f,0.40f}});
-    m_obstacles.push_back({"Massif Central","mountain",{V(0.2f,3.5f),V(1.5f,3),V(2.2f,3.5f),V(2,5),V(1,5.2f),V(-0.2f,4.8f),V(-0.3f,4)},{},{0.52f,0.48f,0.42f}});
-    m_obstacles.push_back({"Jura","mountain",{V(5.5f,-0.5f),V(6.2f,-0.3f),V(6.5f,0.5f),V(6,0.8f),V(5.3f,0.3f)},{},{0.53f,0.48f,0.43f}});
-    m_obstacles.push_back({"Lac Leman","lake",{V(5.8f,0.6f),V(6.5f,0.5f),V(6.8f,0.9f),V(6.3f,1.1f),V(5.7f,0.9f)},{},{0.15f,0.30f,0.55f}});
-    m_obstacles.push_back({"Etang de Berre","lake",{V(4,5.8f),V(4.5f,5.6f),V(4.8f,6),V(4.3f,6.3f),V(3.8f,6.1f)},{},{0.12f,0.28f,0.50f}});
+    m_obstacles.push_back({"Alps","mountain",
+        {V(6.2f,2.0f),V(7.2f,2.5f),V(7.5f,3.8f),V(7.0f,4.8f),V(6.5f,4.5f),V(6.0f,3.0f)},
+        {},{0.55f,0.50f,0.45f}});
+    m_obstacles.push_back({"Pyrenees","mountain",
+        {V(-3.5f,7.5f),V(-1.5f,8.0f),V(0.5f,8.2f),V(1.2f,7.8f),V(0.8f,8.5f),V(-1.0f,8.8f),V(-3.2f,8.5f),V(-3.8f,8.0f)},
+        {},{0.50f,0.45f,0.40f}});
+    m_obstacles.push_back({"Massif Central","mountain",
+        {V(-0.2f,3.0f),V(1.2f,2.8f),V(1.8f,3.5f),V(1.5f,4.8f),V(0.5f,5.0f),V(-0.5f,4.2f)},
+        {},{0.52f,0.48f,0.42f}});
+    m_obstacles.push_back({"Jura","mountain",
+        {V(5.8f,0.0f),V(6.4f,0.2f),V(6.6f,1.0f),V(6.2f,1.3f),V(5.6f,0.8f)},
+        {},{0.53f,0.48f,0.43f}});
+    m_obstacles.push_back({"Lac Leman","lake",
+        {V(6.0f,1.2f),V(6.6f,1.0f),V(6.8f,1.5f),V(6.4f,1.8f),V(5.8f,1.5f)},
+        {},{0.15f,0.30f,0.55f}});
     for(auto&ob:m_obstacles)ob.center=Centroid(ob.vertices);
+    #undef V
+
+    // ═══════════════════════════════════════════════════════════
+    // FOREIGN TERRITORIES — Surrounding countries (18th century)
+    // ═══════════════════════════════════════════════════════════
+    #define V(x,z) glm::vec3(x,0.0f,z)
+    // Austrian Netherlands (Belgium) — north of France
+    m_foreignTerritories.push_back({"Austrian Netherlands",
+        {V(0.2f,-5.8f),V(2.5f,-5.5f),V(3.0f,-4.5f),V(4.5f,-4.5f),V(5.5f,-5.0f),
+         V(5.5f,-7.0f),V(3.0f,-7.5f),V(0.5f,-7.5f),V(-0.5f,-7.0f),V(-0.5f,-6.0f)},
+        {},{0.60f,0.50f,0.35f}}); // brown/tan
+
+    // United Provinces (Dutch Republic) — far north
+    m_foreignTerritories.push_back({"United Provinces",
+        {V(2.5f,-7.5f),V(5.0f,-7.5f),V(5.5f,-7.0f),V(5.5f,-9.0f),V(3.5f,-9.5f),
+         V(1.5f,-9.0f),V(1.5f,-8.0f)},
+        {},{0.75f,0.50f,0.20f}}); // orange
+
+    // Holy Roman Empire (German states) — east
+    m_foreignTerritories.push_back({"Holy Roman Empire",
+        {V(5.5f,-5.0f),V(6.5f,-2.0f),V(6.5f,-0.5f),V(6.2f,0.5f),V(7.0f,0.5f),
+         V(8.5f,0.0f),V(9.5f,-1.5f),V(9.5f,-4.0f),V(8.0f,-6.0f),V(5.5f,-7.0f)},
+        {},{0.80f,0.75f,0.30f}}); // yellow
+
+    // Swiss Confederation — small, east
+    m_foreignTerritories.push_back({"Swiss Confederation",
+        {V(6.5f,0.5f),V(7.0f,0.5f),V(8.2f,0.8f),V(8.5f,1.5f),V(7.5f,2.0f),
+         V(6.5f,1.5f)},
+        {},{0.80f,0.30f,0.25f}}); // red
+
+    // Kingdom of Sardinia (Savoy-Piedmont) — southeast
+    m_foreignTerritories.push_back({"Kingdom of Sardinia",
+        {V(6.8f,2.0f),V(7.5f,2.0f),V(8.5f,2.5f),V(9.0f,4.0f),V(8.5f,5.5f),
+         V(7.5f,5.5f),V(6.8f,5.0f),V(7.0f,3.5f)},
+        {},{0.30f,0.60f,0.45f}}); // teal
+
+    // Kingdom of Spain — south of Pyrenees
+    m_foreignTerritories.push_back({"Kingdom of Spain",
+        {V(-4.2f,7.3f),V(-3.0f,7.8f),V(-1.0f,8.2f),V(0.8f,8.0f),V(1.5f,7.5f),
+         V(2.5f,8.0f),V(3.0f,9.5f),V(1.0f,11.0f),V(-2.0f,11.5f),V(-4.5f,11.0f),
+         V(-6.0f,9.5f),V(-5.5f,8.0f),V(-4.5f,7.5f)},
+        {},{0.70f,0.50f,0.20f}}); // warm brown/orange
+
+    // England (small strip across Channel)
+    m_foreignTerritories.push_back({"Kingdom of England",
+        {V(-5.0f,-7.5f),V(-2.0f,-8.0f),V(0.5f,-7.5f),V(1.5f,-8.0f),
+         V(2.0f,-9.5f),V(-1.0f,-10.0f),V(-4.0f,-9.5f),V(-6.0f,-8.5f)},
+        {},{0.75f,0.25f,0.25f}}); // red
+
+    for(auto&ft:m_foreignTerritories)ft.center=Centroid(ft.vertices);
     #undef V
 
     // Buildings
@@ -290,10 +419,10 @@ void CampaignMap::GenerateTestMap(){
         int aid=a.id;m_armies.push_back(std::move(a));fr->armyIds.push_back(aid);
     };
 
-    mkA("Duc de Richelieu",{-0.3f,0,-0.8f},4,2,2,1);
-    mkA("Comte de Saxe",{1.0f,0,-3.5f},3,1,1,1);
-    mkA("Chevalier de Belle-Isle",{5.5f,0,-1.5f},2,1,1,0);
-    mkA("Duc de Villars",{4.5f,0,5.5f},2,0,1,0);
+    mkA("Duc de Richelieu",{-0.5f,0,-1.5f},4,2,2,1);   // near Paris
+    mkA("Comte de Saxe",{-1.5f,0,-3.5f},3,1,1,1);      // Normandy
+    mkA("Chevalier de Belle-Isle",{5.0f,0,-1.0f},2,1,1,0); // Alsace
+    mkA("Duc de Villars",{4.5f,0,5.5f},2,0,1,0);         // Provence
 
     // ═══════════════════════════════════════════════════════════
     // ENEMY FACTIONS — Surrounding powers at war with France
@@ -338,17 +467,17 @@ void CampaignMap::GenerateTestMap(){
         GetFaction(faction)->armyIds.push_back(aid);
     };
 
-    // British armies — threatening from the north (Channel ports)
-    mkEnemy("britain","Duke of Cumberland",{0.5f,0,-5.5f},4,1,1,1);
-    mkEnemy("britain","Lord Ligonier",{2.5f,0,-5.5f},3,1,1,0);
+    // British armies — north of the Channel
+    mkEnemy("britain","Duke of Cumberland",{0.5f,0,-6.5f},4,1,1,1);
+    mkEnemy("britain","Lord Ligonier",{2.5f,0,-6.5f},3,1,1,0);
 
     // Spanish armies — south of the Pyrenees
-    mkEnemy("spain","Duke of Montemar",{-3.5f,0,10.5f},3,1,1,1);
-    mkEnemy("spain","Marquis de la Mina",{-1.0f,0,10.5f},2,1,0,1);
+    mkEnemy("spain","Duke of Montemar",{-2.0f,0,9.5f},3,1,1,1);
+    mkEnemy("spain","Marquis de la Mina",{0.5f,0,9.5f},2,1,0,1);
 
     // HRE armies — east of the Rhine
-    mkEnemy("hre","Prince Charles",{7.5f,0,-1.0f},3,2,1,1);
-    mkEnemy("hre","Count Browne",{7.5f,0,2.5f},2,1,1,0);
+    mkEnemy("hre","Prince Charles",{7.8f,0,-1.0f},3,2,1,1);
+    mkEnemy("hre","Count Browne",{7.8f,0,2.5f},2,1,1,0);
 
     Logger::Info("Campaign: %d provinces, %d factions, %d armies, %d obstacles",
         (int)m_provinces.size(),(int)m_factions.size(),(int)m_armies.size(),(int)m_obstacles.size());
@@ -359,7 +488,7 @@ void CampaignMap::GenerateTestMap(){
 // ═══════════════════════════════════════════════════════════════
 void CampaignMap::HandleLeftClick(const glm::vec3&worldPos){
     glm::vec2 pt(worldPos.x,worldPos.z);
-    int bestId=-1;float bestD=0.8f;
+    int bestId=-1;float bestD=0.45f; // smaller hitbox
     for(const auto&a:m_armies){
         float d=glm::distance(pt,glm::vec2(a.worldPosition.x,a.worldPosition.z));
         if(d<bestD){bestD=d;bestId=a.id;}
@@ -380,98 +509,137 @@ void CampaignMap::HandleLeftClick(const glm::vec3&worldPos){
 }
 
 void CampaignMap::HandleRightClick(const glm::vec3&worldPos){
-    if(m_exchangeOpen)return; // modal is open, ignore map clicks
+    if(m_exchangeOpen)return;
     if(m_selectedArmyId<0)return;
     Army*army=GetArmy(m_selectedArmyId);
     if(!army)return;
 
-    // Only allow controlling your own armies
     Faction*player=GetPlayerFaction();
     if(!player||army->factionId!=player->id){
         Logger::Warning("Cannot control enemy armies!");return;
     }
 
-    // ── Check if right-clicking a friendly army → MERGE ──
-    // Armies must be within 1.5 world units of each other
     glm::vec2 clickPt(worldPos.x,worldPos.z);
+
+    // ── Check if right-clicking an army ──
     for(auto&other:m_armies){
         if(other.id==army->id)continue;
-        if(other.factionId!=player->id)continue;
         float d=glm::distance(clickPt,glm::vec2(other.worldPosition.x,other.worldPosition.z));
-        if(d<0.8f){
-            // Check proximity between the two armies
+        if(d<0.5f){
             float armyDist=glm::distance(
                 glm::vec2(army->worldPosition.x,army->worldPosition.z),
                 glm::vec2(other.worldPosition.x,other.worldPosition.z));
-            if(armyDist>1.5f){
-                SetNotification("Armies too far apart to merge! Move them closer.");
-                return;
-            }
 
-            int totalUnits=(int)army->units.size()+(int)other.units.size();
-            if(totalUnits<=Army::MAX_UNITS){
-                for(auto&u:other.units) army->units.push_back(std::move(u));
-                other.units.clear();
-                SetNotification("Armies merged! ("+std::to_string((int)army->units.size())+" units)");
-                DestroyArmy(other.id);
+            if(other.factionId==player->id){
+                // FRIENDLY: merge/exchange
+                if(armyDist<1.5f){
+                    // Close enough — merge now
+                    int total=(int)army->units.size()+(int)other.units.size();
+                    if(total<=Army::MAX_UNITS){
+                        for(auto&u:other.units)army->units.push_back(std::move(u));
+                        other.units.clear();
+                        SetNotification("Armies merged! ("+std::to_string((int)army->units.size())+" units)");
+                        DestroyArmy(other.id);
+                    } else {
+                        m_exchangeOpen=true;m_exchangeArmyA=m_selectedArmyId;m_exchangeArmyB=other.id;
+                        m_exchangeSelA.assign(army->units.size(),false);m_exchangeSelB.assign(other.units.size(),false);
+                        m_backupUnitsA=army->units;m_backupUnitsB=other.units;
+                    }
+                } else {
+                    // Too far — schedule movement toward friendly army (tracking)
+                    SchedulePathTo(*army,other.worldPosition,Army::Intent::MERGE,other.id);
+                    SetNotification("Moving to merge with "+other.generalName);
+                }
             } else {
-                // Open exchange modal — save backups for cancel
-                m_exchangeOpen=true;
-                m_exchangeArmyA=m_selectedArmyId;
-                m_exchangeArmyB=other.id;
-                m_exchangeSelA.assign(army->units.size(),false);
-                m_exchangeSelB.assign(other.units.size(),false);
-                // Deep copy units for backup
-                m_backupUnitsA=army->units;
-                m_backupUnitsB=other.units;
-                Logger::Info("Unit Exchange opened: %s (%d) <-> %s (%d)",
-                    army->generalName.c_str(),(int)army->units.size(),
-                    other.generalName.c_str(),(int)other.units.size());
+                // ENEMY: attack
+                if(armyDist<1.5f){
+                    // Close enough — start battle now
+                    StartBattle(army->id,other.id);
+                } else {
+                    // Schedule attack movement (tracking)
+                    SchedulePathTo(*army,other.worldPosition,Army::Intent::ATTACK,other.id);
+                    SetNotification("Attacking "+other.generalName+"!");
+                }
             }
             return;
         }
     }
 
-    if(!IsPointPassable(worldPos)){Logger::Warning("Impassable!");return;}
+    // ── Check if right-clicking a city ──
+    for(const auto&p:m_provinces){
+        float d=glm::distance(clickPt,glm::vec2(p.cityPos.x,p.cityPos.z));
+        if(d<0.5f){
+            SchedulePathTo(*army,p.cityPos,Army::Intent::ENTER_CITY,-1,p.id);
+            return;
+        }
+    }
 
-    // A* pathfinding around obstacles
-    auto path=FindPathWorld(army->worldPosition,worldPos);
+    // ── Empty ground — just move ──
+    if(!IsPointPassable(worldPos)){Logger::Warning("Impassable!");return;}
+    SchedulePathTo(*army,worldPos,Army::Intent::MOVE);
+}
+
+// ─── Schedule a path with turn breaks ─────────────────────────
+void CampaignMap::SchedulePathTo(Army& army, glm::vec3 dest,
+    Army::Intent intent, int targetArmy, int targetCity)
+{
+    auto path=FindPathWorld(army.worldPosition,dest);
     if(path.size()<2){Logger::Warning("No path found!");return;}
 
-    // Calculate total path length
     float totalLen=0;
     for(int i=1;i<(int)path.size();i++)
         totalLen+=glm::distance(glm::vec2(path[i].x,path[i].z),glm::vec2(path[i-1].x,path[i-1].z));
 
-    // Calculate turn breaks
-    army->fullPath=path;
-    army->currentPathIndex=1; // start at first waypoint after current pos
-    army->totalPathLength=totalLen;
-    army->distanceTraveled=0;
-    army->turnBreaks.clear();
+    army.fullPath=path;
+    army.currentPathIndex=1;
+    army.totalPathLength=totalLen;
+    army.distanceTraveled=0;
+    army.turnBreaks.clear();
+    army.intent=intent;
+    army.targetArmyId=targetArmy;
+    army.targetCityProvId=targetCity;
 
     float remaining=totalLen;
     float accumulated=0;
-    float rangeThisTurn=army->movementRange;
-    float rangePerTurn=army->movementRangeMax;
+    float rangeThisTurn=army.movementRange;
+    float rangePerTurn=army.movementRangeMax;
 
-    // Turn 1: use remaining movement this turn
     float t1=std::min(rangeThisTurn,remaining);
-    army->turnBreaks.push_back(t1);
-    accumulated+=t1;remaining-=t1;
-
-    // Subsequent turns
+    army.turnBreaks.push_back(t1);accumulated+=t1;remaining-=t1;
     while(remaining>0.01f){
         float seg=std::min(rangePerTurn,remaining);
         accumulated+=seg;remaining-=seg;
-        army->turnBreaks.push_back(accumulated);
+        army.turnBreaks.push_back(accumulated);
     }
 
-    army->isMoving=true;
+    army.isMoving=true;
+    army.isGarrisoned=false;
 
-    int turns=(int)army->turnBreaks.size();
-    Logger::Info("Army '%s' path: %.1f units, %d turn%s",
-        army->generalName.c_str(),totalLen,turns,turns>1?"s":"");
+    int turns=(int)army.turnBreaks.size();
+    Logger::Info("Army '%s' → %s (%.1f, %d turn%s)",
+        army.generalName.c_str(),
+        intent==Army::Intent::ATTACK?"ATTACK":
+        intent==Army::Intent::MERGE?"MERGE":
+        intent==Army::Intent::ENTER_CITY?"CITY":"MOVE",
+        totalLen,turns,turns>1?"s":"");
+}
+
+// ─── Start a battle between two armies ────────────────────────
+void CampaignMap::StartBattle(int attackerId,int defenderId){
+    Army*atk=GetArmy(attackerId);Army*def=GetArmy(defenderId);
+    if(!atk||!def)return;
+
+    // Stop both armies
+    atk->ClearPath();def->ClearPath();
+
+    BattleSetupData battle;
+    battle.attacker=atk;battle.defender=def;
+    Province*p=GetProvinceAtWorldPos(atk->worldPosition);
+    battle.provinceId=p?p->id:-1;
+    m_pendingBattle=battle;
+
+    SetNotification("BATTLE! "+atk->generalName+" vs "+def->generalName);
+    Logger::Info("*** BATTLE: %s vs %s ***",atk->generalName.c_str(),def->generalName.c_str());
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -479,21 +647,53 @@ void CampaignMap::HandleRightClick(const glm::vec3&worldPos){
 // ═══════════════════════════════════════════════════════════════
 void CampaignMap::Update(float dt,const InputManager&){
     UpdateArmyPositions(dt);
-    DetectBattles();
+    // NO auto-battle detection here — battles are intent-based only
     if(m_notifTimer>0)m_notifTimer-=dt;
 }
 
 void CampaignMap::UpdateArmyPositions(float dt){
     for(auto&army:m_armies){
+        // ── Update tracking targets — recalc path if target moved significantly ──
+        if(army.targetArmyId>=0 && !army.fullPath.empty()){
+            Army*target=GetArmy(army.targetArmyId);
+            if(target && !target->units.empty()){
+                glm::vec3 lastPt=army.fullPath.back();
+                float drift=glm::distance(glm::vec2(lastPt.x,lastPt.z),
+                    glm::vec2(target->worldPosition.x,target->worldPosition.z));
+                if(drift>0.5f){
+                    // Target moved significantly — recalculate entire path from current pos
+                    auto newPath=FindPathWorld(army.worldPosition,target->worldPosition);
+                    if(newPath.size()>=2){
+                        army.fullPath=newPath;
+                        army.currentPathIndex=1;
+                        // Recalculate turn breaks from current range
+                        float totalLen=0;
+                        for(int i=1;i<(int)newPath.size();i++)
+                            totalLen+=glm::distance(glm::vec2(newPath[i].x,newPath[i].z),
+                                glm::vec2(newPath[i-1].x,newPath[i-1].z));
+                        army.totalPathLength=totalLen;
+                        army.distanceTraveled=0;
+                        army.turnBreaks.clear();
+                        float rem=totalLen,acc=0;
+                        float rt=army.movementRange;
+                        float t1=std::min(rt,rem);
+                        army.turnBreaks.push_back(t1);acc+=t1;rem-=t1;
+                        while(rem>0.01f){float s=std::min(army.movementRangeMax,rem);acc+=s;rem-=s;army.turnBreaks.push_back(acc);}
+                    }
+                }
+            } else if(!target || target->units.empty()){
+                // Target destroyed — stop
+                army.ClearPath();continue;
+            }
+        }
+
         if(!army.isMoving||army.fullPath.empty())continue;
 
-        // How far can we walk this turn?
-        float turnLimit=(army.turnBreaks.empty())?army.movementRange:army.turnBreaks[0];
+        // This turn's movement limit
+        float turnLimit=army.turnBreaks.empty()?army.movementRange:army.turnBreaks[0];
 
-        // Move toward next waypoint
         if(army.currentPathIndex>=(int)army.fullPath.size()){
-            army.isMoving=false;army.fullPath.clear();army.turnBreaks.clear();
-            UpdateArmyProvince(army);continue;
+            HandleArmyArrival(army);continue;
         }
 
         glm::vec3 target=army.fullPath[army.currentPathIndex];
@@ -504,23 +704,24 @@ void CampaignMap::UpdateArmyPositions(float dt){
             army.worldPosition=target;
             army.currentPathIndex++;
             if(army.currentPathIndex>=(int)army.fullPath.size()){
-                army.isMoving=false;army.fullPath.clear();army.turnBreaks.clear();
-                army.movementRange=0;
-                UpdateArmyProvince(army);
+                HandleArmyArrival(army);
             }
             continue;
         }
 
         float step=army.moveSpeed*dt;
 
-        // Check if we'd exceed this turn's limit
-        float wouldTravel=army.distanceTraveled+step;
-        if(wouldTravel>=turnLimit){
-            // Stop here for this turn — remaining path continues next turn
-            army.isMoving=false; // will resume next turn
+        // Don't exceed this turn's limit
+        if(army.distanceTraveled+step>=turnLimit){
+            army.isMoving=false;
             army.movementRange=0;
+            UpdateArmyProvince(army);
+            continue;
+        }
 
-            Logger::Info("Army '%s' stopped (end of turn movement)",army.generalName.c_str());
+        // Check if army has range left
+        if(army.movementRange<=0.01f){
+            army.isMoving=false;
             UpdateArmyProvince(army);
             continue;
         }
@@ -530,8 +731,82 @@ void CampaignMap::UpdateArmyPositions(float dt){
         army.worldPosition+=moveDir*step;
         army.worldPosition.y=0;
         army.distanceTraveled+=step;
+        // ── KEY FIX: deduct movement range as we walk ──
+        army.movementRange-=step;
+        if(army.movementRange<0)army.movementRange=0;
 
         if(army.id==m_selectedArmyId)m_selectionWorldPos=army.worldPosition;
+    }
+}
+
+// ─── Handle what happens when an army reaches its destination ──
+void CampaignMap::HandleArmyArrival(Army& army){
+    army.isMoving=false;
+    army.movementRange=std::max(0.0f,army.movementRange-army.distanceTraveled);
+    UpdateArmyProvince(army);
+
+    if(army.id==m_selectedArmyId)m_selectionWorldPos=army.worldPosition;
+
+    switch(army.intent){
+        case Army::Intent::ATTACK:{
+            Army*target=GetArmy(army.targetArmyId);
+            if(target){
+                float d=glm::distance(glm::vec2(army.worldPosition.x,army.worldPosition.z),
+                    glm::vec2(target->worldPosition.x,target->worldPosition.z));
+                if(d<1.5f){
+                    StartBattle(army.id,target->id);
+                }
+            }
+            army.ClearPath();
+            break;
+        }
+        case Army::Intent::MERGE:{
+            Army*target=GetArmy(army.targetArmyId);
+            if(target){
+                float d=glm::distance(glm::vec2(army.worldPosition.x,army.worldPosition.z),
+                    glm::vec2(target->worldPosition.x,target->worldPosition.z));
+                if(d<1.5f){
+                    int total=(int)army.units.size()+(int)target->units.size();
+                    if(total<=Army::MAX_UNITS){
+                        for(auto&u:target->units)army.units.push_back(std::move(u));
+                        target->units.clear();
+                        SetNotification("Armies merged!");
+                        DestroyArmy(target->id);
+                    } else {
+                        // Open exchange
+                        m_exchangeOpen=true;m_exchangeArmyA=army.id;m_exchangeArmyB=target->id;
+                        m_exchangeSelA.assign(army.units.size(),false);
+                        m_exchangeSelB.assign(target->units.size(),false);
+                        m_backupUnitsA=army.units;m_backupUnitsB=target->units;
+                    }
+                }
+            }
+            army.ClearPath();
+            break;
+        }
+        case Army::Intent::ENTER_CITY:{
+            Province*p=GetProvince(army.targetCityProvId);
+            if(p){
+                army.isGarrisoned=true;
+                army.worldPosition=p->cityPos;
+                Logger::Info("Army '%s' garrisoned in %s",army.generalName.c_str(),p->cityName.c_str());
+                CheckCityOccupation(army);
+            }
+            army.ClearPath();
+            break;
+        }
+        default:
+            army.ClearPath();
+            break;
+    }
+}
+
+// ─── Check if army occupies a hostile city ────────────────────
+void CampaignMap::CheckCityOccupation(Army& army){
+    Province*p=GetProvince(army.currentProvinceId);
+    if(!p)return;
+    if(p->ownerFactionId!=army.factionId){
+        CaptureProvince(p->id,army.factionId);
     }
 }
 
@@ -540,6 +815,7 @@ void CampaignMap::UpdateArmyProvince(Army&a){
     if(a.id==m_selectedArmyId)m_selectionWorldPos=a.worldPosition;
 }
 
+// Called AFTER all execution is complete (end of turn cycle)
 void CampaignMap::ProcessTurn(){
     m_currentTurn++;
     Logger::Info("=== Turn %d (%s %s) ===",m_currentTurn,GetCurrentSeason().c_str(),GetCurrentYear().c_str());
@@ -551,25 +827,62 @@ void CampaignMap::ProcessTurn(){
         f.UpdateEconomy(inc,exp);
     }
 
-    // Reset movement and continue scheduled paths
+    // Restore movement and shift turn breaks — but DON'T start moving
     for(auto&a:m_armies){
         a.movementRange=a.movementRangeMax;
         a.distanceTraveled=0;
 
-        // If army has remaining scheduled path, continue it
         if(!a.fullPath.empty()&&a.currentPathIndex<(int)a.fullPath.size()){
-            // Remove the first turn break (it's been used)
             if(!a.turnBreaks.empty()){
                 float used=a.turnBreaks[0];
                 a.turnBreaks.erase(a.turnBreaks.begin());
-                // Shift remaining breaks down
                 for(auto&tb:a.turnBreaks)tb-=used;
             }
-            a.isMoving=true;
-            Logger::Info("Army '%s' continues march (%d waypoints left)",
+            // NOT setting isMoving — armies wait for explicit activation
+            a.isMoving=false;
+            Logger::Info("Army '%s' has scheduled path (%d waypoints left)",
                 a.generalName.c_str(),(int)a.fullPath.size()-a.currentPathIndex);
         }
     }
+}
+
+// Start the next scheduled army that has fatigue remaining. Returns army ID or -1.
+int CampaignMap::StartNextScheduledArmy(const std::string& factionId){
+    for(auto&a:m_armies){
+        if(a.factionId!=factionId)continue;
+        if(a.isMoving)continue;
+        if(a.fullPath.empty()||a.currentPathIndex>=(int)a.fullPath.size())continue;
+        if(a.turnBreaks.empty())continue;
+        // KEY: only start if army has movement range left
+        if(a.movementRange<0.1f){
+            Logger::Info("Army '%s' fatigued (%.1f range) — skipping",a.generalName.c_str(),a.movementRange);
+            continue;
+        }
+        // Don't start if the first segment is 0 (already exhausted this turn)
+        if(a.turnBreaks[0]<0.1f){
+            Logger::Info("Army '%s' has zero-length segment — skipping",a.generalName.c_str());
+            continue;
+        }
+
+        a.isMoving=true;
+        a.distanceTraveled=0;
+        Logger::Info("Starting army '%s' (%.1f range, %.1f segment)",
+            a.generalName.c_str(),a.movementRange,a.turnBreaks[0]);
+        return a.id;
+    }
+    return -1;
+}
+
+// Check if any army of a faction is currently moving
+bool CampaignMap::IsAnyArmyMoving(const std::string& factionId)const{
+    for(const auto&a:m_armies)
+        if(a.factionId==factionId&&a.isMoving)return true;
+    return false;
+}
+
+// Stop all armies (used before turn transition)
+void CampaignMap::StopAllArmies(){
+    for(auto&a:m_armies)a.isMoving=false;
 }
 
 std::string CampaignMap::GetCurrentSeason()const{const char*s[]={"Spring","Summer","Autumn","Winter"};return s[(m_currentTurn-1)%4];}
@@ -721,30 +1034,82 @@ void CampaignMap::CancelExchange(){
 BattleSetupData CampaignMap::GetPendingBattle(){return m_pendingBattle.value();}
 void CampaignMap::ApplyBattleResult(const BattleResult& r){
     m_pendingBattle.reset();
-
-    // The battle resolver already modified the armies' unit stats.
-    // Clean up: remove destroyed units, check if army is wiped out
     for(auto&a:m_armies)a.RemoveDestroyedUnits();
 
-    // Remove empty armies
-    for(int i=(int)m_armies.size()-1;i>=0;i--){
-        if(m_armies[i].units.empty()){
-            Logger::Info("Army '%s' destroyed!",m_armies[i].generalName.c_str());
-            // Check if this changes province ownership
-            Province*p=GetProvinceAtWorldPos(m_armies[i].worldPosition);
-            // Find the winning army nearby
-            for(auto&other:m_armies){
-                if(other.id!=m_armies[i].id && !other.units.empty()){
-                    float d=glm::distance(glm::vec2(other.worldPosition.x,other.worldPosition.z),
-                                          glm::vec2(m_armies[i].worldPosition.x,m_armies[i].worldPosition.z));
-                    if(d<2.0f && p && p->ownerFactionId!=other.factionId){
-                        CaptureProvince(p->id,other.factionId);
-                    }
+    std::vector<int> toDestroy;
+    for(auto&a:m_armies)
+        if(a.units.empty())toDestroy.push_back(a.id);
+
+    // Find winner and loser among survivors near the battle
+    int winnerId=-1, loserId=-1;
+    float bestWinMen=0;
+
+    // Find two armies close together that were in a battle
+    for(int i=0;i<(int)m_armies.size();i++){
+        if(m_armies[i].units.empty())continue;
+        for(int j=i+1;j<(int)m_armies.size();j++){
+            if(m_armies[j].units.empty())continue;
+            if(m_armies[i].factionId==m_armies[j].factionId)continue;
+            float d=glm::distance(glm::vec2(m_armies[i].worldPosition.x,m_armies[i].worldPosition.z),
+                glm::vec2(m_armies[j].worldPosition.x,m_armies[j].worldPosition.z));
+            if(d<3.0f){
+                // These two fought — winner has more men
+                if(m_armies[i].GetTotalManpower()>=m_armies[j].GetTotalManpower()){
+                    winnerId=m_armies[i].id;loserId=m_armies[j].id;
+                } else {
+                    winnerId=m_armies[j].id;loserId=m_armies[i].id;
                 }
             }
-            DestroyArmy(m_armies[i].id);
+        }
+        // Also check if this army is near a destroyed army
+        for(int did:toDestroy){
+            Army*dead=GetArmy(did);
+            if(!dead)continue;
+            float d=glm::distance(glm::vec2(m_armies[i].worldPosition.x,m_armies[i].worldPosition.z),
+                glm::vec2(dead->worldPosition.x,dead->worldPosition.z));
+            if(d<3.0f&&m_armies[i].GetTotalManpower()>bestWinMen){
+                bestWinMen=(float)m_armies[i].GetTotalManpower();
+                winnerId=m_armies[i].id;
+            }
         }
     }
+
+    // Retreat the loser (if alive)
+    Army*loser=GetArmy(loserId);
+    if(loser&&!loser->units.empty()){
+        // Find nearest friendly city
+        float bestDist=999;glm::vec3 retreatDest=loser->worldPosition;
+        for(const auto&p:m_provinces){
+            if(p.ownerFactionId==loser->factionId){
+                float d=glm::distance(glm::vec2(loser->worldPosition.x,loser->worldPosition.z),
+                    glm::vec2(p.cityPos.x,p.cityPos.z));
+                if(d>0.5f&&d<bestDist){bestDist=d;retreatDest=p.cityPos;}
+            }
+        }
+        if(bestDist>998){
+            Army*w=GetArmy(winnerId);
+            if(w){
+                glm::vec2 away=glm::normalize(glm::vec2(loser->worldPosition.x-w->worldPosition.x,
+                    loser->worldPosition.z-w->worldPosition.z));
+                retreatDest={loser->worldPosition.x+away.x*4.0f,0,loser->worldPosition.z+away.y*4.0f};
+            }
+        }
+        // Give full movement for retreat flee
+        loser->movementRange=loser->movementRangeMax;
+        SchedulePathTo(*loser,retreatDest,Army::Intent::MOVE);
+        // SchedulePathTo sets isMoving=true, army will walk and deplete range
+        Logger::Info("Army '%s' retreating!",loser->generalName.c_str());
+    }
+
+    // Province capture by winner
+    Army*winner=GetArmy(winnerId);
+    if(winner){
+        Province*p=GetProvinceAtWorldPos(winner->worldPosition);
+        if(p&&p->ownerFactionId!=winner->factionId)
+            CaptureProvince(p->id,winner->factionId);
+    }
+
+    for(int aid:toDestroy)DestroyArmy(aid);
 }
 
 void CampaignMap::SetNotification(const std::string&msg){
@@ -753,50 +1118,57 @@ void CampaignMap::SetNotification(const std::string&msg){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// AI — Simple aggressive behavior
+// AI — Intent-based aggressive behavior
 // ═══════════════════════════════════════════════════════════════
 void CampaignMap::RunAI(){
     Logger::Info("Running AI turns...");
 
+    Faction*player=GetPlayerFaction();
+    if(!player)return;
+
     for(auto&faction:m_factions){
         if(faction.isPlayerControlled||faction.isEliminated)continue;
-
-        // Find French provinces to attack
-        Faction*player=GetPlayerFaction();
-        if(!player||!faction.IsAtWarWith(player->id))continue;
+        if(!faction.IsAtWarWith(player->id))continue;
 
         for(int aid:faction.armyIds){
             Army*army=GetArmy(aid);
-            if(!army||army->isMoving)continue;
+            if(!army||army->isMoving||army->units.empty())continue;
 
-            // Find nearest French province center to march toward
-            float bestDist=999;
-            glm::vec3 bestTarget={0,0,0};
-            for(auto&p:m_provinces){
-                if(p.ownerFactionId==player->id){
-                    float d=glm::distance(glm::vec2(army->worldPosition.x,army->worldPosition.z),
-                                          glm::vec2(p.center.x,p.center.z));
-                    if(d<bestDist){bestDist=d;bestTarget=p.center;}
-                }
+            // Find nearest player army to attack
+            float bestArmyDist=999;int bestArmyTarget=-1;
+            for(const auto&pa:m_armies){
+                if(pa.factionId!=player->id||pa.units.empty())continue;
+                float d=glm::distance(glm::vec2(army->worldPosition.x,army->worldPosition.z),
+                                      glm::vec2(pa.worldPosition.x,pa.worldPosition.z));
+                if(d<bestArmyDist){bestArmyDist=d;bestArmyTarget=pa.id;}
             }
 
-            if(bestDist<999){
-                // Move toward target
-                glm::vec2 dir=glm::normalize(glm::vec2(bestTarget.x-army->worldPosition.x,
-                                                        bestTarget.z-army->worldPosition.z));
-                float moveDist=std::min(army->movementRange,bestDist);
-                glm::vec3 dest={army->worldPosition.x+dir.x*moveDist,0,
-                                army->worldPosition.z+dir.y*moveDist};
+            // Find nearest player city to capture
+            float bestCityDist=999;int bestCityProv=-1;
+            for(const auto&p:m_provinces){
+                if(p.ownerFactionId!=player->id)continue;
+                float d=glm::distance(glm::vec2(army->worldPosition.x,army->worldPosition.z),
+                                      glm::vec2(p.cityPos.x,p.cityPos.z));
+                if(d<bestCityDist){bestCityDist=d;bestCityProv=p.id;}
+            }
 
-                // Simple direct movement (AI doesn't need A* for now)
-                if(IsPointOnLand(dest)){ // at least check it's on land
-                    army->fullPath={army->worldPosition,dest};
-                    army->currentPathIndex=1;
-                    army->isMoving=true;
-                    army->turnBreaks={moveDist};
-                    army->distanceTraveled=0;
-                    army->movementRange-=moveDist;
+            // Prefer attacking armies over cities, but choose closest target
+            if(bestArmyDist<bestCityDist+3.0f && bestArmyTarget>=0){
+                // Attack nearest player army
+                Army*target=GetArmy(bestArmyTarget);
+                if(target){
+                    float d=glm::distance(glm::vec2(army->worldPosition.x,army->worldPosition.z),
+                                          glm::vec2(target->worldPosition.x,target->worldPosition.z));
+                    if(d<1.5f){
+                        StartBattle(army->id,target->id);
+                    } else {
+                        SchedulePathTo(*army,target->worldPosition,Army::Intent::ATTACK,target->id);
+                    }
                 }
+            } else if(bestCityProv>=0){
+                // March toward nearest city
+                Province*p=GetProvince(bestCityProv);
+                if(p) SchedulePathTo(*army,p->cityPos,Army::Intent::ENTER_CITY,-1,p->id);
             }
         }
     }
@@ -806,41 +1178,11 @@ void CampaignMap::RunAI(){
 // BATTLE DETECTION — when hostile armies are close
 // ═══════════════════════════════════════════════════════════════
 void CampaignMap::DetectBattles(){
-    if(m_pendingBattle.has_value())return; // one at a time
-
-    for(int i=0;i<(int)m_armies.size();i++){
-        for(int j=i+1;j<(int)m_armies.size();j++){
-            if(m_armies[i].factionId==m_armies[j].factionId)continue;
-            if(m_armies[i].units.empty()||m_armies[j].units.empty())continue;
-
-            // Check if factions are at war
-            Faction*fi=GetFaction(m_armies[i].factionId);
-            Faction*fj=GetFaction(m_armies[j].factionId);
-            if(!fi||!fj||!fi->IsAtWarWith(fj->id))continue;
-
-            float dist=glm::distance(glm::vec2(m_armies[i].worldPosition.x,m_armies[i].worldPosition.z),
-                                     glm::vec2(m_armies[j].worldPosition.x,m_armies[j].worldPosition.z));
-            if(dist<1.0f){
-                // BATTLE!
-                BattleSetupData battle;
-                battle.attacker=&m_armies[i];
-                battle.defender=&m_armies[j];
-                Province*p=GetProvinceAtWorldPos(m_armies[i].worldPosition);
-                battle.provinceId=p?p->id:-1;
-                m_pendingBattle=battle;
-
-                // Stop both armies
-                m_armies[i].isMoving=false;m_armies[i].fullPath.clear();
-                m_armies[j].isMoving=false;m_armies[j].fullPath.clear();
-
-                SetNotification("BATTLE! "+m_armies[i].generalName+" vs "+m_armies[j].generalName);
-                Logger::Info("*** BATTLE: %s (%d men) vs %s (%d men) ***",
-                    m_armies[i].generalName.c_str(),m_armies[i].GetTotalManpower(),
-                    m_armies[j].generalName.c_str(),m_armies[j].GetTotalManpower());
-                return;
-            }
-        }
-    }
+    // Intentionally empty — battles are now triggered by intent (ATTACK)
+    // not by proximity detection. See HandleArmyArrival and AI.
+}
+void CampaignMap::CheckForBattles(){
+    // Legacy — no longer used
 }
 
 // ═══════════════════════════════════════════════════════════════

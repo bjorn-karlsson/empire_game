@@ -5,6 +5,7 @@
 #include "rendering/Renderer.h"
 #include "rendering/Camera.h"
 #include "rendering/Shader.h"
+#include "rendering/BitmapFont.h"
 #include "campaign/CampaignMap.h"
 #include "campaign/Province.h"
 #include "battle/BattleScene.h"
@@ -12,6 +13,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 #include <vector>
+#include <string>
 
 Renderer::Renderer(int w,int h):m_width(w),m_height(h){}
 Renderer::~Renderer(){
@@ -34,12 +36,15 @@ bool Renderer::Init(){
     // Create dynamic VAOs (empty, filled each frame)
     glGenVertexArrays(1,&m_moveMeshVAO);glGenBuffers(1,&m_moveMeshVBO);
     glGenVertexArrays(1,&m_pathVAO);glGenBuffers(1,&m_pathVBO);
+    glGenVertexArrays(1,&m_textVAO);glGenBuffers(1,&m_textVBO);
+    BuildFontTexture();
     return true;
 }
 
 void Renderer::BuildMapGeometry(const CampaignMap&map){
     for(const auto&p:map.GetProvinces())BuildProvinceGPU(p);
     for(const auto&ob:map.GetObstacles())BuildObstacleGPU(ob);
+    for(const auto&ft:map.GetForeignTerritories())BuildForeignGPU(ft);
 }
 void Renderer::RebuildProvinceColors(const CampaignMap&){
     // Colors are sent as uniforms each frame — no GPU rebuild needed
@@ -77,6 +82,42 @@ void Renderer::BuildObstacleGPU(const TerrainObstacle&ob){
     glBindBuffer(GL_ARRAY_BUFFER,gpu.VBO);glBufferData(GL_ARRAY_BUFFER,v.size()*sizeof(float),v.data(),GL_STATIC_DRAW);
     glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
     glBindVertexArray(0);m_obstacleGPUs.push_back(gpu);
+}
+
+void Renderer::BuildForeignGPU(const ForeignTerritory&ft){
+    if(ft.vertices.size()<3)return;ObstacleGPU gpu;std::vector<float>v;
+    glm::vec3 c=ft.center;int n=(int)ft.vertices.size();float y=-0.01f;
+    for(int i=0;i<n;i++){auto&v0=ft.vertices[i];auto&v1=ft.vertices[(i+1)%n];
+        v.insert(v.end(),{c.x,y,c.z,v0.x,y,v0.z,v1.x,y,v1.z});}
+    gpu.vertexCount=n*3;
+    glGenVertexArrays(1,&gpu.VAO);glGenBuffers(1,&gpu.VBO);glBindVertexArray(gpu.VAO);
+    glBindBuffer(GL_ARRAY_BUFFER,gpu.VBO);glBufferData(GL_ARRAY_BUFFER,v.size()*sizeof(float),v.data(),GL_STATIC_DRAW);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
+    glBindVertexArray(0);m_foreignGPUs.push_back(gpu);
+}
+
+void Renderer::BuildFontTexture(){
+    // Create 128x64 texture atlas: 16 chars per row, 6 rows, each char 8x8 pixels
+    const int atlasW=128,atlasH=64;
+    std::vector<unsigned char>pixels(atlasW*atlasH,0);
+    for(int ch=0;ch<96;ch++){
+        int cx=(ch%16)*8, cy=(ch/16)*8;
+        for(int row=0;row<8;row++){
+            uint8_t bits=FONT_8X8[ch][row];
+            for(int col=0;col<8;col++){
+                if(bits&(0x80>>col))
+                    pixels[(cy+row)*atlasW+(cx+col)]=255;
+            }
+        }
+    }
+    glGenTextures(1,&m_fontTexture);
+    glBindTexture(GL_TEXTURE_2D,m_fontTexture);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RED,atlasW,atlasH,0,GL_RED,GL_UNSIGNED_BYTE,pixels.data());
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    Logger::Info("Font texture atlas created (%dx%d)",atlasW,atlasH);
 }
 
 void Renderer::BuildWaterPlane(){
@@ -182,6 +223,33 @@ void Renderer::InitShaders(){
     })",
     R"(#version 330 core
     uniform vec4 u_Color;out vec4 FC;void main(){FC=u_Color;})");
+
+    // Text shader — renders bitmap font quads
+    m_textShader=std::make_unique<Shader>();
+    m_textShader->LoadFromSource(
+    R"(#version 330 core
+    layout(location=0)in vec2 aPos;
+    layout(location=1)in vec2 aUV;
+    uniform vec4 u_Rect;
+    uniform vec4 u_Screen;
+    out vec2 v_UV;
+    void main(){
+        vec2 p = aPos * u_Rect.zw + u_Rect.xy;
+        vec2 ndc = (p / u_Screen.xy) * 2.0 - 1.0;
+        ndc.y = -ndc.y;
+        gl_Position = vec4(ndc, 0, 1);
+        v_UV = aUV;
+    })",
+    R"(#version 330 core
+    in vec2 v_UV;
+    uniform sampler2D u_Font;
+    uniform vec4 u_Color;
+    out vec4 FC;
+    void main(){
+        float a = texture(u_Font, v_UV).r;
+        if(a < 0.5) discard;
+        FC = u_Color;
+    })");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -196,10 +264,14 @@ void Renderer::RenderCampaignMap(const CampaignMap&map){
     glStencilFunc(GL_EQUAL,0,0xFF);glStencilMask(0x00);
     RenderWater();
     glStencilFunc(GL_ALWAYS,0,0xFF);glStencilMask(0x00);
+    RenderForeignTerritories(map);
     RenderObstacles(map);RenderBorders(map);
     RenderMovementMesh(map);RenderPathArrows(map);
     RenderCities(map);RenderArmies(map);RenderSelectionCircle(map);
     glStencilMask(0xFF);
+
+    // Map labels (world-space text)
+    RenderMapLabels(map);
 
     // HUD (2D overlay, after all 3D)
     RenderHUD(map);
@@ -241,6 +313,108 @@ void Renderer::RenderBorders(const CampaignMap&map){
 }
 
 // ── Movement mesh: green overlay from flood-fill cells ────────
+// ── Screen-space text using bitmap font ───────────────────────
+void Renderer::DrawScreenText(const std::string&text,float x,float y,float scale,glm::vec4 color){
+    if(text.empty()||!m_fontTexture)return;
+    float charW=8*scale,charH=8*scale;
+    // Build quads: 6 verts per char (pos.xy + uv.xy)
+    std::vector<float>verts;
+    float cx=x;
+    for(char c:text){
+        int idx=c-32;
+        if(idx<0||idx>=96){cx+=charW;continue;}
+        float u0=(float)(idx%16)*8.0f/128.0f;
+        float v0=(float)(idx/16)*8.0f/64.0f;
+        float u1=u0+8.0f/128.0f;
+        float v1=v0+8.0f/64.0f;
+        // 2 triangles: TL,TR,BL + TR,BR,BL (in screen coords via shader)
+        // We pass raw pixel coords; shader maps via u_Rect={0,0,1,1}
+        verts.insert(verts.end(),{cx,y,u0,v0, cx+charW,y,u1,v0, cx,y+charH,u0,v1,
+            cx+charW,y,u1,v0, cx+charW,y+charH,u1,v1, cx,y+charH,u0,v1});
+        cx+=charW;
+    }
+    if(verts.empty())return;
+
+    glBindVertexArray(m_textVAO);glBindBuffer(GL_ARRAY_BUFFER,m_textVBO);
+    glBufferData(GL_ARRAY_BUFFER,verts.size()*sizeof(float),verts.data(),GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,4*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,4*sizeof(float),(void*)(2*sizeof(float)));glEnableVertexAttribArray(1);
+
+    m_textShader->Use();
+    m_textShader->SetVec4("u_Rect",{0,0,1,1}); // identity — coords already in pixels
+    m_textShader->SetVec4("u_Screen",{(float)m_width,(float)m_height,0,0});
+    m_textShader->SetVec4("u_Color",color);
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,m_fontTexture);
+
+    glDrawArrays(GL_TRIANGLES,0,(int)verts.size()/4);
+    glBindVertexArray(0);
+}
+
+// ── World-space text (projects 3D position to screen) ─────────
+void Renderer::DrawWorldText(const std::string&text,glm::vec3 worldPos,float scale,glm::vec4 color){
+    glm::mat4 vp=m_camera->GetViewProjectionMatrix();
+    glm::vec4 clip=vp*glm::vec4(worldPos,1.0f);
+    if(clip.w<=0)return; // behind camera
+    glm::vec3 ndc=glm::vec3(clip)/clip.w;
+    float sx=(ndc.x*0.5f+0.5f)*m_width;
+    float sy=(1.0f-(ndc.y*0.5f+0.5f))*m_height;
+    // Center text
+    float textW=text.size()*8*scale;
+    DrawScreenText(text,sx-textW*0.5f,sy,scale,color);
+}
+
+// ── Foreign territories (surrounding countries) ───────────────
+void Renderer::RenderForeignTerritories(const CampaignMap&map){
+    m_borderShader->Use();m_borderShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
+    auto&fts=map.GetForeignTerritories();
+    for(int i=0;i<(int)fts.size()&&i<(int)m_foreignGPUs.size();i++){
+        // Darker, desaturated colors for foreign land
+        glm::vec3 c=fts[i].color*0.4f;
+        m_borderShader->SetVec3("u_Color",c);
+        glBindVertexArray(m_foreignGPUs[i].VAO);
+        glDrawArrays(GL_TRIANGLES,0,m_foreignGPUs[i].vertexCount);
+    }
+    glBindVertexArray(0);
+}
+
+// ── Map labels (province names, city names, army names, foreign countries) ──
+void Renderer::RenderMapLabels(const CampaignMap&map){
+    glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
+
+    // Province names
+    for(const auto&p:map.GetProvinces()){
+        glm::vec4 col={0.9f,0.88f,0.75f,0.85f};
+        DrawWorldText(p.name,{p.center.x,0.2f,p.center.z},1.2f,col);
+    }
+
+    // City names (smaller, below city markers)
+    for(const auto&p:map.GetProvinces()){
+        glm::vec4 col=p.isCapital?glm::vec4(1.0f,0.9f,0.5f,0.95f):glm::vec4(0.8f,0.75f,0.6f,0.8f);
+        float scale=p.isCapital?1.3f:1.0f;
+        DrawWorldText(p.cityName,{p.cityPos.x,0.15f,p.cityPos.z+0.35f},scale,col);
+    }
+
+    // Army labels (general name + unit count)
+    for(const auto&a:map.GetArmies()){
+        if(a.isGarrisoned)continue;
+        const Faction*f=map.GetFaction(a.factionId);
+        glm::vec3 fc=f?f->color:glm::vec3(0.5f);
+        glm::vec4 col={fc.r*0.5f+0.5f,fc.g*0.5f+0.5f,fc.b*0.5f+0.5f,0.95f};
+        std::string label=a.generalName;
+        DrawWorldText(label,{a.worldPosition.x,1.1f,a.worldPosition.z},1.0f,col);
+        // Unit count below
+        std::string info=std::to_string(a.GetTotalManpower())+" men";
+        DrawWorldText(info,{a.worldPosition.x,1.0f,a.worldPosition.z+0.15f},0.8f,{0.8f,0.8f,0.75f,0.75f});
+    }
+
+    // Foreign country names
+    for(const auto&ft:map.GetForeignTerritories()){
+        DrawWorldText(ft.name,{ft.center.x,0.1f,ft.center.z},1.5f,{0.6f,0.55f,0.45f,0.7f});
+    }
+
+    glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
+}
+
 void Renderer::RenderMovementMesh(const CampaignMap&map){
     int sel=map.GetSelectedArmyId();if(sel<0)return;
     const Army*a=map.GetArmy(sel);if(!a||a->movementRange<0.05f)return;
@@ -426,21 +600,19 @@ void Renderer::RenderHUD(const CampaignMap&map){
     int season=(map.GetCurrentTurn()-1)%4;
     DrawScreenQuad(10,6,24,24,seasonColors[season]);
 
-    // Turn number as small blocks (each block = 1 turn, max 20 visible)
-    int turn=map.GetCurrentTurn();
-    for(int i=0;i<std::min(turn,20);i++){
-        float tx=44+i*8;
-        DrawScreenQuad(tx,12,6,12,{0.6f,0.6f,0.7f,0.8f});
-    }
+    // Season + Year text
+    std::string seasonName[]={"Spring","Summer","Autumn","Winter"};
+    DrawScreenText(seasonName[season]+" "+map.GetCurrentYear(),44,10,1.5f,{0.85f,0.82f,0.7f,0.95f});
 
     // Treasury bar (gold)
     const Faction*player=map.GetPlayerFaction();
     if(player){
         float maxTreasury=20000.0f;
         float treasuryRatio=glm::clamp((float)player->treasury/maxTreasury,0.0f,1.0f);
-        float barX=sw-260;
-        DrawScreenQuad(barX,8,200,20,{0.15f,0.12f,0.08f,0.8f}); // bg
-        DrawScreenQuad(barX,8,200*treasuryRatio,20,{0.85f,0.7f,0.15f,0.9f}); // gold fill
+        float barX=sw-310;
+        DrawScreenText("Treasury: "+std::to_string(player->treasury),barX,4,1.2f,{0.9f,0.8f,0.4f,0.95f});
+        DrawScreenQuad(barX,20,200,12,{0.15f,0.12f,0.08f,0.8f});
+        DrawScreenQuad(barX,20,200*treasuryRatio,12,{0.85f,0.7f,0.15f,0.9f});
 
         // Income indicator (green/red bar below treasury)
         int net=player->incomePerTurn-player->expensesPerTurn;
@@ -450,48 +622,51 @@ void Renderer::RenderHUD(const CampaignMap&map){
     }
 
     // End Turn button (bottom right)
-    float btnW=100,btnH=30;
+    float btnW=120,btnH=32;
     float btnX=sw-btnW-10,btnY=sh-btnH-10;
-    DrawScreenQuad(btnX,btnY,btnW,btnH,{0.15f,0.4f,0.15f,0.85f}); // green button
-    DrawScreenQuad(btnX+2,btnY+2,btnW-4,btnH-4,{0.2f,0.55f,0.2f,0.9f}); // lighter inner
+    DrawScreenQuad(btnX,btnY,btnW,btnH,{0.15f,0.4f,0.15f,0.85f});
+    DrawScreenQuad(btnX+2,btnY+2,btnW-4,btnH-4,{0.2f,0.55f,0.2f,0.9f});
+    DrawScreenText("End Turn",btnX+20,btnY+8,1.5f,{0.95f,0.92f,0.8f,1});
 
     // Selected army info (bottom left panel)
     int selArmy=map.GetSelectedArmyId();
     if(selArmy>=0){
         const Army*a=map.GetArmy(selArmy);
         if(a){
-            float panelW=280,panelH=80;
+            float panelW=300,panelH=100;
             DrawScreenQuad(0,sh-panelH,panelW,panelH,{0.05f,0.05f,0.1f,0.85f});
 
-            // Faction color stripe
             const Faction*f=map.GetFaction(a->factionId);
             glm::vec3 fc=f?f->color:glm::vec3(0.5f);
             DrawScreenQuad(0,sh-panelH,6,panelH,{fc.r,fc.g,fc.b,1});
 
-            // Unit count bars (each unit = small rectangle)
+            // General name + faction
+            DrawScreenText(a->generalName,14,sh-panelH+4,1.3f,{0.95f,0.9f,0.75f,1});
+            DrawScreenText(std::to_string(a->GetTotalManpower())+" men  "+
+                std::to_string((int)a->units.size())+" units",14,sh-panelH+18,1.0f,{0.75f,0.72f,0.6f,0.9f});
+
+            // Unit count bars
             for(int i=0;i<(int)a->units.size();i++){
-                float ux=14+i*12;
-                float uy=sh-panelH+10;
+                float ux=14+i*13;
+                float uy=sh-panelH+34;
                 // Bar height based on manpower ratio
                 float hpRatio=(float)a->units[i].stats.manpower/a->units[i].stats.maxManpower;
-                float barH=50*hpRatio;
-                // Color by unit type
+                float barH=40*hpRatio;
                 glm::vec4 unitColor={0.5f,0.5f,0.6f,0.9f};
                 if(a->units[i].type==UnitType::LINE_INFANTRY) unitColor={0.3f,0.4f,0.8f,0.9f};
                 if(a->units[i].type==UnitType::GRENADIERS) unitColor={0.8f,0.3f,0.3f,0.9f};
                 if(a->units[i].type==UnitType::DRAGOONS||a->units[i].type==UnitType::HUSSARS) unitColor={0.3f,0.7f,0.3f,0.9f};
                 if(a->units[i].type==UnitType::CANNON_6PDR||a->units[i].type==UnitType::CANNON_12PDR) unitColor={0.7f,0.6f,0.3f,0.9f};
 
-                DrawScreenQuad(ux,uy+50-barH,10,barH,unitColor);
-                // Dark bg
-                DrawScreenQuad(ux,uy,10,50,{0.1f,0.1f,0.15f,0.5f});
-                DrawScreenQuad(ux,uy+50-barH,10,barH,unitColor);
+                DrawScreenQuad(ux,uy,10,40,{0.1f,0.1f,0.15f,0.5f});
+                DrawScreenQuad(ux,uy+40-barH,10,barH,unitColor);
             }
 
             // Movement range bar
             float moveRatio=a->movementRange/a->movementRangeMax;
-            DrawScreenQuad(14,sh-18,250,8,{0.1f,0.1f,0.15f,0.6f});
-            DrawScreenQuad(14,sh-18,250*moveRatio,8,{0.2f,0.8f,0.3f,0.9f});
+            DrawScreenQuad(14,sh-22,270,10,{0.1f,0.1f,0.15f,0.6f});
+            DrawScreenQuad(14,sh-22,270*moveRatio,10,{0.2f,0.8f,0.3f,0.9f});
+            DrawScreenText("Move",14,sh-34,0.9f,{0.6f,0.8f,0.6f,0.8f});
         }
     }
 
@@ -500,38 +675,38 @@ void Renderer::RenderHUD(const CampaignMap&map){
     if(selProv>=0&&selArmy<0){
         const Province*p=map.GetProvince(selProv);
         if(p){
-            float panelW=200,panelH=60;
+            float panelW=250,panelH=80;
             DrawScreenQuad(0,sh-panelH,panelW,panelH,{0.05f,0.05f,0.1f,0.85f});
+            DrawScreenText(p->cityName,10,sh-panelH+4,1.4f,{0.95f,0.9f,0.7f,1});
+            DrawScreenText(p->name,10,sh-panelH+20,1.0f,{0.7f,0.65f,0.55f,0.85f});
 
             // Income bar
             float incRatio=glm::clamp(p->GetTotalIncome()/500.0f,0.0f,1.0f);
-            DrawScreenQuad(10,sh-panelH+10,180,12,{0.1f,0.1f,0.15f,0.5f});
-            DrawScreenQuad(10,sh-panelH+10,180*incRatio,12,{0.85f,0.7f,0.15f,0.9f});
+            DrawScreenText("Income: "+std::to_string(p->GetTotalIncome()),10,sh-panelH+34,1.0f,{0.85f,0.75f,0.4f,0.9f});
+            DrawScreenQuad(10,sh-panelH+48,220,8,{0.1f,0.1f,0.15f,0.5f});
+            DrawScreenQuad(10,sh-panelH+48,220*incRatio,8,{0.85f,0.7f,0.15f,0.9f});
 
             // Public order bar
             float orderRatio=p->publicOrder/100.0f;
             glm::vec4 orderColor=orderRatio>0.5f?glm::vec4(0.2f,0.7f,0.2f,0.9f):glm::vec4(0.8f,0.3f,0.2f,0.9f);
-            DrawScreenQuad(10,sh-panelH+28,180,12,{0.1f,0.1f,0.15f,0.5f});
-            DrawScreenQuad(10,sh-panelH+28,180*orderRatio,12,orderColor);
-
-            // Building count indicators
-            for(int i=0;i<(int)p->buildings.size();i++){
-                DrawScreenQuad(10+i*20,sh-panelH+46,16,10,{0.5f,0.45f,0.35f,0.9f});
-            }
+            DrawScreenText("Order: "+std::to_string((int)p->publicOrder)+"%",10,sh-panelH+58,1.0f,orderColor);
+            DrawScreenQuad(10,sh-panelH+70,220,8,{0.1f,0.1f,0.15f,0.5f});
+            DrawScreenQuad(10,sh-panelH+70,220*orderRatio,8,orderColor);
         }
     }
 
-    // Faction indicators (top right - shows who you're at war with)
+    // Faction indicators (top right - faction names with war status)
+    float factionY=6;
     for(int fi=0;fi<(int)map.GetFactions().size();fi++){
         const auto&f=map.GetFactions()[fi];
         if(f.isPlayerControlled)continue;
-        float fx=sw-40-fi*30,fy=6;
+        float fx=sw-45-fi*85;
         glm::vec4 fc={f.color.r,f.color.g,f.color.b,f.isEliminated?0.3f:0.9f};
-        DrawScreenQuad(fx,fy,24,24,fc);
-        // Red X if at war
+        DrawScreenQuad(fx,factionY,80,24,{0.05f,0.05f,0.08f,0.7f});
+        DrawScreenQuad(fx,factionY,4,24,fc);
+        DrawScreenText(f.name.substr(0,std::min((int)f.name.size(),10)),fx+8,factionY+5,1.0f,fc);
         if(!f.isEliminated&&player&&f.IsAtWarWith(player->id)){
-            DrawScreenQuad(fx+2,fy+10,20,4,{0.9f,0.15f,0.15f,0.9f}); // horizontal line
-            DrawScreenQuad(fx+10,fy+2,4,20,{0.9f,0.15f,0.15f,0.9f}); // vertical line (cross)
+            DrawScreenText("WAR",fx+55,factionY+5,0.9f,{0.9f,0.2f,0.2f,0.9f});
         }
     }
 
@@ -547,10 +722,13 @@ void Renderer::RenderNotification(const CampaignMap&map){
     float alpha=glm::clamp(map.GetNotificationTimer(),0.0f,1.0f);
 
     // Banner across top-center
-    float bannerW=400,bannerH=40;
+    float bannerW=500,bannerH=40;
     float bx=(sw-bannerW)/2,by=50;
     DrawScreenQuad(bx,by,bannerW,bannerH,{0.6f,0.15f,0.15f,0.85f*alpha});
     DrawScreenQuad(bx+2,by+2,bannerW-4,bannerH-4,{0.75f,0.2f,0.2f,0.8f*alpha});
+    std::string notif=map.GetNotification();
+    float textX=bx+(bannerW-notif.size()*10)/2;
+    DrawScreenText(notif,textX,by+10,1.4f,{1,0.95f,0.85f,alpha});
 
     glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
 }
@@ -578,19 +756,21 @@ void Renderer::RenderExchangeModal(const CampaignMap&map){
 
     // Title bar
     DrawScreenQuad(px+10,py+8,panW-20,30,{0.25f,0.20f,0.15f,0.9f});
+    DrawScreenText("Unit Exchange",px+panW/2-65,py+14,1.5f,{0.95f,0.9f,0.75f,1});
 
     // Divider
     float cx=sw/2;
     DrawScreenQuad(cx-1,py+45,2,panH-65,{0.15f,0.12f,0.08f,0.8f});
 
-    // Swap button (center, between the armies)
+    // Swap button
     float btnW=70,btnH=30;
     float swapX=cx-btnW/2, swapY=py+panH/2-btnH/2;
     DrawScreenQuad(swapX,swapY,btnW,btnH,{0.45f,0.35f,0.15f,0.9f});
     DrawScreenQuad(swapX+2,swapY+2,btnW-4,btnH-4,{0.6f,0.5f,0.25f,0.9f});
+    DrawScreenText("Swap",swapX+15,swapY+8,1.3f,{0.95f,0.9f,0.7f,1});
     // Arrows on swap button
-    DrawScreenQuad(swapX+10,swapY+8,btnW-20,3,{0.9f,0.85f,0.6f,0.9f});
-    DrawScreenQuad(swapX+10,swapY+btnH-11,btnW-20,3,{0.9f,0.85f,0.6f,0.9f});
+    DrawScreenQuad(swapX+10,swapY+8,btnW-20,3,{0.9f,0.85f,0.6f,0.0f});
+    DrawScreenQuad(swapX+10,swapY+btnH-11,btnW-20,3,{0.9f,0.85f,0.6f,0.0f});
 
     float halfW=(panW-30)/2;
     float leftX=px+10,rightX=px+halfW+20;
@@ -604,7 +784,8 @@ void Renderer::RenderExchangeModal(const CampaignMap&map){
 
     // Army A header + unit count bar
     DrawScreenQuad(leftX,py+48,halfW,6,{colA.r,colA.g,colA.b,1});
-    DrawScreenQuad(leftX,py+58,(float)a->units.size()/20.0f*halfW,8,{0.5f,0.5f,0.6f,0.7f});
+    DrawScreenText(a->generalName,leftX,py+56,1.1f,{0.9f,0.85f,0.7f,0.95f});
+    DrawScreenText(std::to_string((int)a->units.size())+"/20 units",leftX,py+68,0.9f,{0.7f,0.65f,0.55f,0.8f});
 
     // Army A units
     for(int i=0;i<(int)a->units.size();i++){
@@ -623,7 +804,8 @@ void Renderer::RenderExchangeModal(const CampaignMap&map){
 
     // Army B header
     DrawScreenQuad(rightX,py+48,halfW,6,{colB.r,colB.g,colB.b,1});
-    DrawScreenQuad(rightX,py+58,(float)b->units.size()/20.0f*halfW,8,{0.5f,0.5f,0.6f,0.7f});
+    DrawScreenText(b->generalName,rightX,py+56,1.1f,{0.9f,0.85f,0.7f,0.95f});
+    DrawScreenText(std::to_string((int)b->units.size())+"/20 units",rightX,py+68,0.9f,{0.7f,0.65f,0.55f,0.8f});
 
     // Army B units
     for(int i=0;i<(int)b->units.size();i++){
@@ -645,27 +827,26 @@ void Renderer::RenderExchangeModal(const CampaignMap&map){
     float acceptX=px+panW/2-abtnW-40,acceptY=py+panH-45;
     DrawScreenQuad(acceptX,acceptY,abtnW,abtnH,{0.15f,0.45f,0.15f,0.9f});
     DrawScreenQuad(acceptX+2,acceptY+2,abtnW-4,abtnH-4,{0.2f,0.6f,0.2f,0.9f});
+    DrawScreenText("Accept",acceptX+8,acceptY+8,1.2f,{0.95f,0.92f,0.8f,1});
 
     // Cancel button (red, right of center)
     float cancelX=px+panW/2+40;
     DrawScreenQuad(cancelX,acceptY,abtnW,abtnH,{0.5f,0.12f,0.12f,0.9f});
     DrawScreenQuad(cancelX+2,acceptY+2,abtnW-4,abtnH-4,{0.65f,0.18f,0.18f,0.9f});
+    DrawScreenText("Cancel",cancelX+8,acceptY+8,1.2f,{0.95f,0.85f,0.8f,1});
 
-    // Selection count indicators
+    // Selection count text
     int selCountA=0,selCountB=0;
     for(bool s:selA)if(s)selCountA++;
     for(bool s:selB)if(s)selCountB++;
-    // Show selected count as small blocks below each army
-    for(int i=0;i<selCountA;i++)DrawScreenQuad(leftX+i*8,py+panH-70,6,10,{0.4f,0.8f,0.3f,0.9f});
-    for(int i=0;i<selCountB;i++)DrawScreenQuad(rightX+i*8,py+panH-70,6,10,{0.4f,0.8f,0.3f,0.9f});
+    if(selCountA>0)DrawScreenText(std::to_string(selCountA)+" selected",leftX,py+panH-68,1.0f,{0.5f,0.85f,0.4f,0.9f});
+    if(selCountB>0)DrawScreenText(std::to_string(selCountB)+" selected",rightX,py+panH-68,1.0f,{0.5f,0.85f,0.4f,0.9f});
 
     glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
 }
 
 void Renderer::RenderBattle(const BattleScene& battle){
-    glClearColor(0.08f,0.06f,0.04f,1);
-    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
-    glClearColor(0.05f,0.08f,0.15f,1);
+    // Campaign map is already rendered behind us — just overlay the battle UI
     glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
 
     float sw=(float)m_width,sh=(float)m_height;
@@ -693,7 +874,8 @@ void Renderer::RenderBattle(const BattleScene& battle){
         // Top banner
         float banH=50;
         DrawScreenQuad(0,0,sw,banH,{0.18f,0.14f,0.10f,0.95f});
-        DrawScreenQuad(cx-120,5,240,banH-10,{0.25f,0.2f,0.15f,0.9f});
+        DrawScreenQuad(cx-150,5,300,banH-10,{0.25f,0.2f,0.15f,0.9f});
+        DrawScreenText("Battle Deployment",cx-100,15,2.0f,{0.95f,0.9f,0.75f,1});
 
         // ── Left panel: Your Forces ──
         float lpW=sw*0.28f,lpH=sh-banH-160;
@@ -701,8 +883,10 @@ void Renderer::RenderBattle(const BattleScene& battle){
         DrawScreenQuad(lpX,lpY,lpW,lpH,{0.12f,0.10f,0.08f,0.9f});
         DrawScreenQuad(lpX+2,lpY+2,lpW-4,lpH-4,{0.3f,0.25f,0.18f,0.9f});
 
-        // Attacker faction color stripe
+        // Attacker info
         DrawScreenQuad(lpX+5,lpY+5,lpW-10,6,{atk.factionColor.r,atk.factionColor.g,atk.factionColor.b,1});
+        DrawScreenText(atk.generalName,lpX+10,lpY+14,1.2f,{0.95f,0.9f,0.7f,1});
+        DrawScreenText(std::to_string(atk.totalManpower)+" men",lpX+10,lpY+28,1.0f,{0.8f,0.75f,0.6f,0.9f});
 
         // Manpower bar
         DrawScreenQuad(lpX+10,lpY+20,lpW-20,10,{0.15f,0.12f,0.08f,0.6f});
@@ -727,13 +911,15 @@ void Renderer::RenderBattle(const BattleScene& battle){
         DrawScreenQuad(rpX+2,lpY+2,lpW-4,lpH-4,{0.3f,0.25f,0.18f,0.9f});
 
         DrawScreenQuad(rpX+5,lpY+5,lpW-10,6,{def.factionColor.r,def.factionColor.g,def.factionColor.b,1});
-        DrawScreenQuad(rpX+10,lpY+20,lpW-20,10,{0.15f,0.12f,0.08f,0.6f});
-        DrawScreenQuad(rpX+10,lpY+20,(lpW-20)*def.totalManpower/maxMen,10,
+        DrawScreenText(def.generalName,rpX+10,lpY+14,1.2f,{0.95f,0.9f,0.7f,1});
+        DrawScreenText(std::to_string(def.totalManpower)+" men",rpX+10,lpY+28,1.0f,{0.8f,0.75f,0.6f,0.9f});
+        DrawScreenQuad(rpX+10,lpY+40,lpW-20,10,{0.15f,0.12f,0.08f,0.6f});
+        DrawScreenQuad(rpX+10,lpY+40,(lpW-20)*def.totalManpower/maxMen,10,
             {def.factionColor.r,def.factionColor.g,def.factionColor.b,0.8f});
 
         for(int i=0;i<(int)def.units.size();i++){
             float ux=rpX+8+(cardW+cardGap)*(i%7);
-            float uy=lpY+40+(cardH+cardGap)*(i/7);
+            float uy=lpY+55+(cardH+cardGap)*(i/7);
             DrawScreenQuad(ux,uy,cardW,cardH,{0.15f,0.12f,0.08f,0.7f});
             glm::vec4 tc=unitCol(def.units[i].type);
             float hp=(float)def.units[i].manpowerBefore/150.0f;
@@ -741,52 +927,49 @@ void Renderer::RenderBattle(const BattleScene& battle){
         }
 
         // ── Center: Battle details panel ──
-        float cpW=sw*0.35f,cpH=120;
+        float cpW=sw*0.35f,cpH=130;
         float cpX=(sw-cpW)/2,cpY=sh-cpH-40;
         DrawScreenQuad(cpX,cpY,cpW,cpH,{0.18f,0.14f,0.10f,0.95f});
         DrawScreenQuad(cpX+2,cpY+2,cpW-4,cpH-4,{0.3f,0.25f,0.18f,0.95f});
 
-        // Predicted outcome bar (green=attacker advantage, red=defender)
+        // Predicted outcome label + bar
+        DrawScreenText("Predicted Outcome",cpX+15,cpY+5,1.0f,{0.8f,0.75f,0.6f,0.9f});
         float predW=cpW-30;
         float pred=battle.GetPredictedOutcome();
-        DrawScreenQuad(cpX+15,cpY+15,predW,16,{0.15f,0.12f,0.08f,0.6f});
-        // Green portion (attacker chance)
-        DrawScreenQuad(cpX+15,cpY+15,predW*pred,16,{0.2f,0.65f,0.2f,0.9f});
-        // Red portion (defender chance)
-        DrawScreenQuad(cpX+15+predW*pred,cpY+15,predW*(1-pred),16,{0.7f,0.15f,0.15f,0.9f});
-        // Center marker
-        DrawScreenQuad(cpX+15+predW*0.5f-1,cpY+13,2,20,{0.9f,0.85f,0.7f,0.9f});
+        DrawScreenQuad(cpX+15,cpY+20,predW,16,{0.15f,0.12f,0.08f,0.6f});
+        DrawScreenQuad(cpX+15,cpY+20,predW*pred,16,{0.2f,0.65f,0.2f,0.9f});
+        DrawScreenQuad(cpX+15+predW*pred,cpY+20,predW*(1-pred),16,{0.7f,0.15f,0.15f,0.9f});
+        DrawScreenQuad(cpX+15+predW*0.5f-1,cpY+18,2,20,{0.9f,0.85f,0.7f,0.9f});
+        int pctStr=(int)(pred*100);
+        DrawScreenText(std::to_string(pctStr)+"%",cpX+15+predW*pred-10,cpY+38,0.9f,{0.9f,0.9f,0.8f,0.8f});
 
         // Three buttons
         float btnW=cpW/3-20,btnH=35;
-        float btnY=cpY+cpH-50;
+        float btnY2=cpY+cpH-50;
 
         // Fight button (disabled/grey for now)
         float btn1X=cpX+15;
-        DrawScreenQuad(btn1X,btnY,btnW,btnH,{0.3f,0.25f,0.2f,0.5f});
-        DrawScreenQuad(btn1X+2,btnY+2,btnW-4,btnH-4,{0.4f,0.35f,0.3f,0.4f});
+        DrawScreenQuad(btn1X,btnY2,btnW,btnH,{0.3f,0.25f,0.2f,0.5f});
+        DrawScreenQuad(btn1X+2,btnY2+2,btnW-4,btnH-4,{0.4f,0.35f,0.3f,0.4f});
+        DrawScreenText("Fight",btn1X+btnW/2-20,btnY2+10,1.2f,{0.6f,0.55f,0.5f,0.5f});
 
         // Auto-resolve button (gold)
         float btn2X=cpX+cpW/3+5;
-        DrawScreenQuad(btn2X,btnY,btnW,btnH,{0.5f,0.4f,0.1f,0.9f});
-        DrawScreenQuad(btn2X+2,btnY+2,btnW-4,btnH-4,{0.7f,0.55f,0.15f,0.9f});
-        // Crossed swords icon
-        DrawScreenQuad(btn2X+btnW/2-8,btnY+8,2,btnH-16,{0.95f,0.9f,0.7f,0.9f});
-        DrawScreenQuad(btn2X+btnW/2+6,btnY+8,2,btnH-16,{0.95f,0.9f,0.7f,0.9f});
-        DrawScreenQuad(btn2X+btnW/2-10,btnY+btnH/2-1,20,2,{0.95f,0.9f,0.7f,0.9f});
+        DrawScreenQuad(btn2X,btnY2,btnW,btnH,{0.5f,0.4f,0.1f,0.9f});
+        DrawScreenQuad(btn2X+2,btnY2+2,btnW-4,btnH-4,{0.7f,0.55f,0.15f,0.9f});
+        DrawScreenText("Resolve",btn2X+btnW/2-28,btnY2+10,1.2f,{0.95f,0.9f,0.7f,1});
 
         // Retreat button (dark red)
         float btn3X=cpX+2*cpW/3-5;
-        DrawScreenQuad(btn3X,btnY,btnW,btnH,{0.5f,0.12f,0.08f,0.9f});
-        DrawScreenQuad(btn3X+2,btnY+2,btnW-4,btnH-4,{0.65f,0.18f,0.12f,0.9f});
-        // Arrow icon (retreat)
-        DrawScreenQuad(btn3X+10,btnY+btnH/2-1,btnW-20,2,{0.9f,0.8f,0.7f,0.9f});
-        DrawScreenQuad(btn3X+10,btnY+btnH/2-5,2,8,{0.9f,0.8f,0.7f,0.9f});
+        DrawScreenQuad(btn3X,btnY2,btnW,btnH,{0.5f,0.12f,0.08f,0.9f});
+        DrawScreenQuad(btn3X+2,btnY2+2,btnW-4,btnH-4,{0.65f,0.18f,0.12f,0.9f});
+        DrawScreenText("Retreat",btn3X+btnW/2-28,btnY2+10,1.2f,{0.95f,0.85f,0.8f,1});
 
     } else {
         // ═══════════════════════════════════════════════════════
         // POST-BATTLE RESULTS SCREEN
         // ═══════════════════════════════════════════════════════
+        DrawScreenQuad(0,0,sw,sh,{0.05f,0.03f,0.02f,0.6f}); // dim overlay
         bool atkWon=battle.AttackerWon();
 
         float panW=sw*0.65f,panH=sh*0.75f;
@@ -796,49 +979,64 @@ void Renderer::RenderBattle(const BattleScene& battle){
 
         // Title: Victory/Defeat
         float titleH=40;
-        DrawScreenQuad(px+panW/2-100,py+8,200,titleH,{0.25f,0.2f,0.15f,0.9f});
-        if(atkWon) DrawScreenQuad(px+panW/2-95,py+12,190,titleH-8,{0.15f,0.45f,0.15f,0.8f});
-        else       DrawScreenQuad(px+panW/2-95,py+12,190,titleH-8,{0.55f,0.12f,0.12f,0.8f});
+        DrawScreenQuad(px+panW/2-120,py+8,240,titleH,{0.25f,0.2f,0.15f,0.9f});
+        if(atkWon){
+            DrawScreenQuad(px+panW/2-115,py+12,230,titleH-8,{0.15f,0.45f,0.15f,0.8f});
+            DrawScreenText("VICTORY!",px+panW/2-48,py+18,2.0f,{0.95f,0.92f,0.7f,1});
+        } else {
+            DrawScreenQuad(px+panW/2-115,py+12,230,titleH-8,{0.55f,0.12f,0.12f,0.8f});
+            DrawScreenText("DEFEAT",px+panW/2-36,py+18,2.0f,{0.95f,0.85f,0.8f,1});
+        }
 
-        // Stats table area
+        // Battle Results header
         float tableY=py+60;
-        DrawScreenQuad(px+15,tableY,panW-30,60,{0.25f,0.2f,0.15f,0.8f});
+        DrawScreenQuad(px+15,tableY,panW-30,80,{0.25f,0.2f,0.15f,0.8f});
+        DrawScreenText("Battle Results",px+20,tableY+2,1.2f,{0.85f,0.8f,0.65f,0.9f});
+
+        // Column headers
+        float col1=px+30,col2=px+200,col3=px+310,col4=px+400;
+        DrawScreenText("General",col1,tableY+16,1.0f,{0.7f,0.65f,0.55f,0.8f});
+        DrawScreenText("Deployed",col2,tableY+16,1.0f,{0.7f,0.65f,0.55f,0.8f});
+        DrawScreenText("Lost",col3,tableY+16,1.0f,{0.7f,0.65f,0.55f,0.8f});
+        DrawScreenText("Remaining",col4,tableY+16,1.0f,{0.7f,0.65f,0.55f,0.8f});
 
         // Attacker stats row
-        DrawScreenQuad(px+20,tableY+5,8,20,{atk.factionColor.r,atk.factionColor.g,atk.factionColor.b,1});
-        // Deployed bar
-        float maxDep=(float)std::max(atk.totalManpower,def.totalManpower);
-        DrawScreenQuad(px+35,tableY+5,120*(float)atk.totalManpower/maxDep,8,{0.5f,0.5f,0.6f,0.8f});
-        // Lost bar (red)
+        DrawScreenQuad(px+20,tableY+30,8,16,{atk.factionColor.r,atk.factionColor.g,atk.factionColor.b,1});
+        DrawScreenText(atk.generalName,col1,tableY+32,1.0f,{0.9f,0.85f,0.7f,1});
+        DrawScreenText(std::to_string(atk.totalManpower),col2,tableY+32,1.0f,{0.85f,0.82f,0.7f,0.9f});
         float atkLoss=(float)battle.GetResult().attackerCasualties;
-        DrawScreenQuad(px+35,tableY+15,120*atkLoss/std::max((float)atk.totalManpower,1.f),8,{0.8f,0.2f,0.2f,0.8f});
+        DrawScreenText(std::to_string((int)atkLoss),col3,tableY+32,1.0f,{0.85f,0.3f,0.25f,0.9f});
+        DrawScreenText(std::to_string(atk.totalManpower-(int)atkLoss),col4,tableY+32,1.0f,{0.8f,0.8f,0.7f,0.9f});
 
         // Defender stats row
-        DrawScreenQuad(px+20,tableY+32,8,20,{def.factionColor.r,def.factionColor.g,def.factionColor.b,1});
-        DrawScreenQuad(px+35,tableY+32,120*(float)def.totalManpower/maxDep,8,{0.5f,0.5f,0.6f,0.8f});
+        DrawScreenQuad(px+20,tableY+52,8,16,{def.factionColor.r,def.factionColor.g,def.factionColor.b,1});
+        DrawScreenText(def.generalName,col1,tableY+54,1.0f,{0.9f,0.85f,0.7f,1});
+        DrawScreenText(std::to_string(def.totalManpower),col2,tableY+54,1.0f,{0.85f,0.82f,0.7f,0.9f});
         float defLoss=(float)battle.GetResult().defenderCasualties;
-        DrawScreenQuad(px+35,tableY+42,120*defLoss/std::max((float)def.totalManpower,1.f),8,{0.8f,0.2f,0.2f,0.8f});
+        DrawScreenText(std::to_string((int)defLoss),col3,tableY+54,1.0f,{0.85f,0.3f,0.25f,0.9f});
+        DrawScreenText(std::to_string(def.totalManpower-(int)defLoss),col4,tableY+54,1.0f,{0.8f,0.8f,0.7f,0.9f});
 
         // Unit review header
-        DrawScreenQuad(px+15,tableY+70,panW-30,25,{0.25f,0.2f,0.15f,0.9f});
+        DrawScreenQuad(px+15,tableY+85,panW-30,25,{0.25f,0.2f,0.15f,0.9f});
+        DrawScreenText("Unit Review",px+20,tableY+90,1.2f,{0.85f,0.8f,0.65f,0.9f});
 
         // Unit cards (your army review)
         float cardW=34,cardH=55,cardGap=4;
-        float unitY=tableY+100;
-        const auto& reviewArmy = atkWon ? atk : def; // show winner's units
+        float unitY=tableY+115;
+        int colsPerRow=std::max(1,(int)((panW-40)/(cardW+cardGap)));
 
         for(int i=0;i<(int)atk.units.size();i++){
-            float ux=px+20+(cardW+cardGap)*(i%((int)((panW-40)/(cardW+cardGap))));
-            float uy=unitY+(cardH+cardGap)*(i/((int)((panW-40)/(cardW+cardGap))));
+            float ux=px+20+(cardW+cardGap)*(i%colsPerRow);
+            float uy=unitY+(cardH+cardGap)*(i/colsPerRow);
             DrawScreenQuad(ux,uy,cardW,cardH,{0.15f,0.12f,0.08f,0.7f});
             glm::vec4 tc=unitCol(atk.units[i].type);
             float hpB=(float)atk.units[i].manpowerBefore/150.0f;
             float hpA=(float)atk.units[i].manpowerAfter/150.0f;
-            // Before (dimmed)
             DrawScreenQuad(ux+2,uy+2,cardW-4,(cardH-4)*hpB,{tc.r*0.3f,tc.g*0.3f,tc.b*0.3f,0.4f});
-            // After (bright, from bottom)
             float aH=(cardH-4)*hpA;
             DrawScreenQuad(ux+2,uy+2+(cardH-4)-aH,cardW-4,aH,tc);
+            // Manpower number below card
+            DrawScreenText(std::to_string(atk.units[i].manpowerAfter),ux,uy+cardH+1,0.8f,{0.7f,0.7f,0.6f,0.8f});
             if(atk.units[i].destroyed){
                 DrawScreenQuad(ux+4,uy+cardH/2-1,cardW-8,3,{0.9f,0.1f,0.1f,0.9f});
                 DrawScreenQuad(ux+cardW/2-1,uy+4,3,cardH-8,{0.9f,0.1f,0.1f,0.9f});
@@ -847,10 +1045,8 @@ void Renderer::RenderBattle(const BattleScene& battle){
 
         // Click to continue (pulsing)
         float pulse=0.5f+0.5f*sin(m_time*3.0f);
-        DrawScreenQuad(cx-40,py+panH-35,80,25,{0.4f,0.35f,0.2f,0.8f*pulse});
-        // Checkmark icon
-        DrawScreenQuad(cx-8,py+panH-28,4,12,{0.9f,0.85f,0.6f,pulse});
-        DrawScreenQuad(cx-4,py+panH-20,12,4,{0.9f,0.85f,0.6f,pulse});
+        DrawScreenQuad(cx-60,py+panH-38,120,28,{0.4f,0.35f,0.2f,0.8f*pulse});
+        DrawScreenText("Continue",cx-40,py+panH-32,1.3f,{0.95f,0.9f,0.7f,pulse});
     }
 
     glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);

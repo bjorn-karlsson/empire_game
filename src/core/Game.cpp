@@ -21,8 +21,13 @@ static Game* g_gameInstance = nullptr;
 
 static void framebufferSizeCallback(GLFWwindow* window, int width, int height)
 {
+    if(width<=0||height<=0)return;
     glViewport(0, 0, width, height);
-    // TODO: notify renderer/camera of resize
+    if(g_gameInstance){
+        g_gameInstance->GetRenderer()->OnResize(width,height);
+        // Update stored dimensions
+        // (accessed via the Game pointer trick below)
+    }
 }
 
 // ─── Constructor / Destructor ─────────────────────────────────
@@ -112,9 +117,15 @@ void Game::Run()
         float currentTime = static_cast<float>(glfwGetTime());
         float deltaTime   = currentTime - m_lastFrameTime;
         m_lastFrameTime   = currentTime;
-
-        // Cap delta to avoid spiral of death on lag spikes
         if (deltaTime > 0.1f) deltaTime = 0.1f;
+
+        // Sync window dimensions each frame
+        int fw,fh;
+        glfwGetFramebufferSize(m_window,&fw,&fh);
+        if(fw>0&&fh>0&&(fw!=m_windowWidth||fh!=m_windowHeight)){
+            m_windowWidth=fw;m_windowHeight=fh;
+            m_renderer->OnResize(fw,fh);
+        }
 
         ProcessInput();
         Update(deltaTime);
@@ -149,34 +160,37 @@ void Game::ProcessInput()
         Camera* cam = m_renderer->GetCamera();
         if (!cam) return;
 
-        float dt = 0.016f; // approximate, fine for input
+        // Block most input during turn execution
+        bool executing = (m_turnPhase != TurnExecPhase::IDLE);
 
-        // WASD / Arrow keys → pan camera
-        float panX = 0.0f, panZ = 0.0f;
-        if (m_input->IsKeyDown(GLFW_KEY_W) || m_input->IsKeyDown(GLFW_KEY_UP))    panZ -= dt;
-        if (m_input->IsKeyDown(GLFW_KEY_S) || m_input->IsKeyDown(GLFW_KEY_DOWN))  panZ += dt;
-        if (m_input->IsKeyDown(GLFW_KEY_A) || m_input->IsKeyDown(GLFW_KEY_LEFT))  panX -= dt;
-        if (m_input->IsKeyDown(GLFW_KEY_D) || m_input->IsKeyDown(GLFW_KEY_RIGHT)) panX += dt;
+        float dt = 0.016f;
 
-        if (panX != 0.0f || panZ != 0.0f)
-            cam->Pan(panX, panZ);
+        // WASD pan (blocked during execution)
+        if (!executing) {
+            float panX = 0.0f, panZ = 0.0f;
+            if (m_input->IsKeyDown(GLFW_KEY_W) || m_input->IsKeyDown(GLFW_KEY_UP))    panZ -= dt;
+            if (m_input->IsKeyDown(GLFW_KEY_S) || m_input->IsKeyDown(GLFW_KEY_DOWN))  panZ += dt;
+            if (m_input->IsKeyDown(GLFW_KEY_A) || m_input->IsKeyDown(GLFW_KEY_LEFT))  panX -= dt;
+            if (m_input->IsKeyDown(GLFW_KEY_D) || m_input->IsKeyDown(GLFW_KEY_RIGHT)) panX += dt;
+            if (panX != 0.0f || panZ != 0.0f)
+                cam->Pan(panX, panZ);
+        }
 
-        // Right-click drag → pan camera (only if NOT dragging to move army)
-        if (m_input->IsMouseButtonDown(2)) { // middle mouse
+        // Middle mouse drag → pan (always allowed)
+        if (m_input->IsMouseButtonDown(2)) {
             glm::vec2 delta = m_input->GetMouseDelta();
             cam->Pan(-delta.x * dt * 0.3f, -delta.y * dt * 0.3f);
         }
 
-        // Scroll wheel → zoom
+        // Scroll wheel → zoom (always allowed)
         float scroll = m_input->GetScrollDelta();
         if (scroll != 0.0f)
             cam->Zoom(scroll);
 
         // Left click → SELECT objects (or exchange modal interaction)
-        if (m_input->IsMouseButtonPressed(0)) {
+        if (m_input->IsMouseButtonPressed(0) && !executing) {
             glm::vec2 mousePos = m_input->GetMousePos();
             if (m_campaignMap->IsExchangeOpen()) {
-                // Route to exchange modal
                 m_campaignMap->HandleExchangeClick(
                     mousePos.x, mousePos.y,
                     (float)m_windowWidth, (float)m_windowHeight);
@@ -189,8 +203,8 @@ void Game::ProcessInput()
             }
         }
 
-        // Right click → ISSUE MOVE ORDER / MERGE (not during exchange)
-        if (m_input->IsMouseButtonPressed(1) && !m_campaignMap->IsExchangeOpen()) {
+        // Right click → ISSUE MOVE ORDER / MERGE (not during exchange or execution)
+        if (m_input->IsMouseButtonPressed(1) && !m_campaignMap->IsExchangeOpen() && !executing) {
             glm::vec2 mousePos = m_input->GetMousePos();
             glm::vec3 worldPos = cam->ScreenToWorldPlane(
                 mousePos.x, mousePos.y,
@@ -209,61 +223,130 @@ void Game::ProcessInput()
 // ─── Update ───────────────────────────────────────────────────
 void Game::Update(float deltaTime)
 {
-    // Update camera smoothing
-    if (m_renderer->GetCamera())
-        m_renderer->GetCamera()->Update(deltaTime);
+    Camera* cam = m_renderer->GetCamera();
+    if (cam) cam->Update(deltaTime);
+
+    // Safety timer to prevent freeze
+    static float safetyTimer = 0;
+    if (m_turnPhase != TurnExecPhase::IDLE) {
+        safetyTimer += deltaTime;
+        if (safetyTimer > 8.0f) {
+            Logger::Warning("Turn execution timeout!");
+            m_campaignMap->StopAllArmies();
+            m_campaignMap->ProcessTurn();
+            m_turnPhase = TurnExecPhase::IDLE;
+            m_cameraLocked = false;
+            if(cam && m_savedCamDist > 0) cam->SetDistance(m_savedCamDist);
+            safetyTimer = 0;
+        }
+    } else { safetyTimer = 0; }
 
     switch (m_state) {
         case GameState::CAMPAIGN_MAP:
-            m_campaignMap->Update(deltaTime, *m_input);
-            m_ui->Update(deltaTime, *m_input);
+        {
+            if (m_turnPhase == TurnExecPhase::IDLE) {
+                m_campaignMap->Update(deltaTime, *m_input);
+                m_ui->Update(deltaTime, *m_input);
 
-            // End turn handling
-            if (m_ui->IsEndTurnButtonClicked()) {
-                m_turnManager->EndTurn();
-                m_ui->ClearEndTurnClick();
+                if (m_ui->IsEndTurnButtonClicked() || m_input->IsKeyPressed(GLFW_KEY_SPACE) ||
+                    m_input->IsKeyPressed(GLFW_KEY_ENTER)) {
+                    m_ui->ClearEndTurnClick();
+                    m_campaignMap->StopAllArmies();
+                    // Execute with CURRENT fatigue — no restore yet
+                    m_turnPhase = TurnExecPhase::PLAYER_MOVES;
+                    m_followArmyId = -1;
+                    m_turnExecTimer = 0.1f;
+                    if(cam) m_savedCamDist = cam->GetDistance();
+                    m_cameraLocked = true;
+                }
+            }
+            else if (m_turnPhase == TurnExecPhase::PLAYER_MOVES) {
+                m_campaignMap->Update(deltaTime, *m_input);
+                if (m_followArmyId >= 0) {
+                    const Army* fa = m_campaignMap->GetArmy(m_followArmyId);
+                    if (fa && fa->isMoving) {
+                        if(cam) cam->SetTarget(fa->worldPosition + glm::vec3(0,0,1));
+                    } else {
+                        m_followArmyId = -1;
+                        m_turnExecTimer = 0.3f;
+                    }
+                } else {
+                    m_turnExecTimer -= deltaTime;
+                    if (m_turnExecTimer <= 0) {
+                        const Faction* pf = m_campaignMap->GetPlayerFaction();
+                        int nextId = pf ? m_campaignMap->StartNextScheduledArmy(pf->id) : -1;
+                        if (nextId >= 0) {
+                            m_followArmyId = nextId;
+                            const Army* a = m_campaignMap->GetArmy(nextId);
+                            if(a && cam){cam->SetTarget(a->worldPosition+glm::vec3(0,0,1));cam->SetDistance(12);}
+                        } else {
+                            m_turnPhase = TurnExecPhase::AI_FACTION;
+                            m_campaignMap->RunAI();
+                            m_turnExecTimer = 0.3f;
+                            m_followArmyId = -1;
+                        }
+                    }
+                }
+            }
+            else if (m_turnPhase == TurnExecPhase::AI_FACTION) {
+                m_campaignMap->Update(deltaTime, *m_input);
+                if (m_followArmyId >= 0) {
+                    const Army* fa = m_campaignMap->GetArmy(m_followArmyId);
+                    if (fa && fa->isMoving) {
+                        if(cam) cam->SetTarget(fa->worldPosition + glm::vec3(0,0,1));
+                    } else {
+                        m_followArmyId = -1;
+                        m_turnExecTimer = 0.2f;
+                    }
+                } else {
+                    m_turnExecTimer -= deltaTime;
+                    if (m_turnExecTimer <= 0) {
+                        bool anyMoving = false;
+                        for (const auto& a : m_campaignMap->GetArmies()) {
+                            const Faction* f = m_campaignMap->GetFaction(a.factionId);
+                            if (f && !f->isPlayerControlled && a.isMoving) {
+                                m_followArmyId = a.id;
+                                if(cam){cam->SetTarget(a.worldPosition+glm::vec3(0,0,1));cam->SetDistance(12);}
+                                anyMoving = true; break;
+                            }
+                        }
+                        if (!anyMoving) {
+                            // ALL done — NOW restore fatigue and shift breaks
+                            m_campaignMap->ProcessTurn();
+                            m_turnPhase = TurnExecPhase::IDLE;
+                            m_cameraLocked = false;
+                            if(cam && m_savedCamDist > 0) cam->SetDistance(m_savedCamDist);
+                            Logger::Info("=== New turn — fatigue restored ===");
+                        }
+                    }
+                }
             }
 
-            // Check if a battle should trigger
             if (m_campaignMap->HasPendingBattle()) {
                 auto battleData = m_campaignMap->GetPendingBattle();
                 m_battleScene->Setup(battleData, *m_campaignMap);
+                if(cam) cam->SetTarget(m_battleScene->GetBattleWorldPos()+glm::vec3(0,0,1));
                 m_state = GameState::BATTLE;
+                m_cameraLocked = false;
             }
             break;
+        }
 
         case GameState::BATTLE:
             m_battleScene->Update(deltaTime, *m_input);
-
-            // Route clicks to battle scene
             if (m_input->IsMouseButtonPressed(0)) {
                 glm::vec2 mp = m_input->GetMousePos();
-                m_battleScene->HandleClick(mp.x, mp.y,
-                    (float)m_windowWidth, (float)m_windowHeight);
+                m_battleScene->HandleClick(mp.x, mp.y, (float)m_windowWidth, (float)m_windowHeight);
             }
-
             if (m_battleScene->IsFinished()) {
-                if (m_battleScene->IsRetreated()) {
-                    // Retreat: just clear the battle, attacker already lost men
-                    m_campaignMap->ApplyBattleResult(m_battleScene->GetResult());
-                } else {
-                    auto result = m_battleScene->GetResult();
-                    m_campaignMap->ApplyBattleResult(result);
-                }
+                m_campaignMap->ApplyBattleResult(m_battleScene->GetResult());
                 m_state = GameState::CAMPAIGN_MAP;
             }
             break;
 
-        case GameState::PAUSED:
-            // Only UI updates in pause
-            break;
-
-        case GameState::MAIN_MENU:
-            // TODO: main menu logic
-            break;
-
-        default:
-            break;
+        case GameState::PAUSED: break;
+        case GameState::MAIN_MENU: break;
+        default: break;
     }
 }
 
@@ -279,7 +362,8 @@ void Game::Render()
             break;
 
         case GameState::BATTLE:
-            m_renderer->RenderBattle(*m_battleScene);
+            m_renderer->RenderCampaignMap(*m_campaignMap); // map visible behind
+            m_renderer->RenderBattle(*m_battleScene);      // battle UI overlay
             break;
 
         case GameState::PAUSED:

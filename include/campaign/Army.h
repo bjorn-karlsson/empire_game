@@ -72,21 +72,33 @@ struct Army {
     int   currentProvinceId = -1;
     glm::vec3 worldPosition = {0, 0, 0};
     bool  isMoving          = false;
+    bool  isGarrisoned      = false;  // inside a city
 
     // Movement per turn
     float movementRange     = 5.0f;   // remaining this turn
     float movementRangeMax  = 5.0f;   // max per turn
     float moveSpeed         = 3.5f;   // visual speed (units/sec)
 
-    // Full path (A* result, world-space waypoints around obstacles)
-    std::vector<glm::vec3> fullPath;   // complete path to final destination
-    int currentPathIndex = 0;          // where we are along the path
+    // Intent: what to do when arriving at destination
+    enum class Intent { NONE, MOVE, ATTACK, MERGE, ENTER_CITY };
+    Intent intent = Intent::NONE;
+    int targetArmyId = -1;    // for ATTACK/MERGE — tracks a moving army
+    int targetCityProvId = -1; // for ENTER_CITY
 
-    // Multi-turn: distances along path where each turn's movement ends
-    // turnBreaks[0] = distance reachable turn 1, turnBreaks[1] = turn 2, etc.
+    // Full path (A* result, world-space waypoints around obstacles)
+    std::vector<glm::vec3> fullPath;
+    int currentPathIndex = 0;
+
+    // Multi-turn scheduling
     std::vector<float> turnBreaks;
     float totalPathLength = 0.0f;
-    float distanceTraveled = 0.0f;     // how far we've walked along the path this turn
+    float distanceTraveled = 0.0f;
+
+    void ClearPath() {
+        fullPath.clear(); turnBreaks.clear(); currentPathIndex=0;
+        totalPathLength=0; distanceTraveled=0; isMoving=false;
+        intent=Intent::NONE; targetArmyId=-1; targetCityProvId=-1;
+    }
 
     // ─── Methods ──────────────────────────────────────────────
     int GetTotalManpower() const {

@@ -18,6 +18,13 @@ struct TerrainObstacle {
     glm::vec3 center, color;
 };
 
+// Foreign countries surrounding France (non-playable, just rendered)
+struct ForeignTerritory {
+    std::string name;
+    std::vector<glm::vec3> vertices;
+    glm::vec3 center, color;
+};
+
 // ─── Navigation Grid ──────────────────────────────────────────
 // 2D grid for A* pathfinding around obstacles.
 // Each cell is passable or not. A* finds shortest path on this grid.
@@ -67,6 +74,7 @@ public:
 
     // Terrain
     const std::vector<TerrainObstacle>& GetObstacles() const { return m_obstacles; }
+    const std::vector<ForeignTerritory>& GetForeignTerritories() const { return m_foreignTerritories; }
     bool IsPointPassable(const glm::vec3&) const;
     bool IsPointOnLand(const glm::vec3&) const;
     const NavGrid& GetNavGrid() const { return m_navGrid; }
@@ -84,9 +92,11 @@ public:
 
     // AI
     void RunAI();
-    void DetectBattles();
+    void DetectBattles(); // only called intentionally now
+    void StartBattle(int attackerArmyId, int defenderArmyId);
     void CaptureProvince(int provinceId, const std::string& newOwner);
     void DestroyArmy(int armyId);
+    void CheckCityOccupation(Army& army);
 
     // Selection
     int GetSelectedProvinceId() const { return m_selectedProvinceId; }
@@ -117,6 +127,11 @@ public:
     std::string GetCurrentSeason() const;
     std::string GetCurrentYear() const;
 
+    // Turn execution helpers
+    int StartNextScheduledArmy(const std::string& factionId);
+    bool IsAnyArmyMoving(const std::string& factionId) const;
+    void StopAllArmies();
+
     void MoveArmy(int,int);
     void RecruitUnit(int,UnitType);
     std::vector<Army*> GetArmiesInProvince(int);
@@ -125,13 +140,17 @@ private:
     void BuildNavGrid();
     void UpdateArmyPositions(float dt);
     void UpdateArmyProvince(Army&);
-    void CheckForBattles();
+    void CheckForBattles(); // legacy, no longer auto-called
+    void HandleArmyArrival(Army& army);
+    void SchedulePathTo(Army& army, glm::vec3 dest, Army::Intent intent,
+                        int targetArmy=-1, int targetCity=-1);
     void SetNotification(const std::string& msg);
 
     std::vector<Province> m_provinces;
     std::vector<Faction> m_factions;
     std::vector<Army> m_armies;
     std::vector<TerrainObstacle> m_obstacles;
+    std::vector<ForeignTerritory> m_foreignTerritories;
     NavGrid m_navGrid;
 
     int m_nextArmyId=1, m_nextUnitId=1, m_currentTurn=1;

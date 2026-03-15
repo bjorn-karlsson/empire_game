@@ -8,7 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # ─── Dependencies ──────────────────────────────────────────────
 # You'll need to install these via vcpkg or manually:
 #   vcpkg install glfw3 glm glad stb
-#
+# 
 # If using vcpkg, pass: -DCMAKE_TOOLCHAIN_FILE=[vcpkg root]/scripts/buildsystems/vcpkg.cmake
 
 find_package(glfw3 3.3 CONFIG REQUIRED)

@@ -385,6 +385,17 @@ void Game::Update(float deltaTime)
             if (m_battleScene->IsFinished()) {
                 m_campaignMap->ApplyBattleResult(m_battleScene->GetResult());
                 m_state = GameState::CAMPAIGN_MAP;
+
+                // Follow the retreating army (if any) before resuming AI
+                m_followArmyId = -1;
+                for (const auto& a : m_campaignMap->GetArmies()) {
+                    if (a.isMoving) {
+                        m_followArmyId = a.id;
+                        if (cam) { cam->SetTarget(a.worldPosition + glm::vec3(0, 0, 1)); cam->SetDistance(12); }
+                        m_turnExecTimer = 0;
+                        break;
+                    }
+                }
             }
             break;
 

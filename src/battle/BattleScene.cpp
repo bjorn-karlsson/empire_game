@@ -15,27 +15,34 @@ static ArmySnapshot SnapArmy(const Army*a,const CampaignMap&map){
     return s;
 }
 
-void BattleScene::Setup(const BattleSetupData&data,const CampaignMap&map){
-    m_battleData=data;m_phase=BattlePhase::PRE_BATTLE;m_retreated=false;m_timer=0;
-    m_attackerSnap=SnapArmy(data.attacker,map);
-    m_defenderSnap=SnapArmy(data.defender,map);
+void BattleScene::Setup(const BattleSetupData& data, const CampaignMap& map) {
+    m_battleData = data; m_phase = BattlePhase::PRE_BATTLE; m_retreated = false; m_timer = 0;
+
+    // Always put the player on the left (attacker side)
+    // If the AI initiated the battle, swap so player is "attacker" in the UI
+    const Faction* atkF = map.GetFaction(data.attacker->factionId);
+    if (atkF && !atkF->isPlayerControlled) {
+        std::swap(m_battleData.attacker, m_battleData.defender);
+    }
+
+    m_attackerSnap = SnapArmy(m_battleData.attacker, map);
+    m_defenderSnap = SnapArmy(m_battleData.defender, map);
 
     // Battle position (midpoint between armies)
-    if(data.attacker&&data.defender)
-        m_battlePos=(data.attacker->worldPosition+data.defender->worldPosition)*0.5f;
+    if (m_battleData.attacker && m_battleData.defender)
+        m_battlePos = (m_battleData.attacker->worldPosition + m_battleData.defender->worldPosition) * 0.5f;
 
     // Predict outcome based on combat power ratio
-    float atkPower=0,defPower=0;
-    if(data.attacker)for(const auto&u:data.attacker->units)
-        atkPower+=u.stats.attack*(u.stats.manpower/10.0f)*(u.stats.morale/100.0f);
-    if(data.defender)for(const auto&u:data.defender->units)
-        defPower+=u.stats.attack*(u.stats.manpower/10.0f)*(u.stats.morale/100.0f);
-    float total=atkPower+defPower;
-    m_predictedOutcome=(total>0)?atkPower/total:0.5f;
+    float atkPower = 0, defPower = 0;
+    if (m_battleData.attacker)for (const auto& u : m_battleData.attacker->units)
+        atkPower += u.stats.attack * (u.stats.manpower / 10.0f) * (u.stats.morale / 100.0f);
+    if (m_battleData.defender)for (const auto& u : m_battleData.defender->units)
+        defPower += u.stats.attack * (u.stats.manpower / 10.0f) * (u.stats.morale / 100.0f);
+    float total = atkPower + defPower;
+    m_predictedOutcome = (total > 0) ? atkPower / total : 0.5f;
 
     // Determine which side the player is on
-    const Faction* atkF = map.GetFaction(data.attacker->factionId);
-    m_playerIsAttacker = (atkF && atkF->isPlayerControlled);
+    m_playerIsAttacker = true; // player is always on the attacker side after swap
 
     Logger::Info("Pre-battle: %s (%d) vs %s (%d) — prediction: %.0f%%",
         m_attackerSnap.generalName.c_str(),m_attackerSnap.totalManpower,

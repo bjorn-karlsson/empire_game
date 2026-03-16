@@ -1195,10 +1195,27 @@ void CampaignMap::ApplyBattleResult(const BattleResult& r) {
         }
 
         // Give full movement for retreat — ignore fatigue
+        // Give full movement for retreat flee
         loser->movementRange = loser->movementRangeMax;
         loser->distanceTraveled = 0;
         loser->pathStartOffset = 0;
-        SchedulePathTo(*loser, retreatDest, Army::Intent::MOVE);
+
+        // Check if retreating to a friendly city → use ENTER_CITY for TryGarrison
+        int retreatCityId = -1;
+        for (const auto& p : m_provinces) {
+            if (p.ownerFactionId == loser->factionId) {
+                float d = glm::distance(glm::vec2(retreatDest.x, retreatDest.z),
+                    glm::vec2(p.cityPos.x, p.cityPos.z));
+                if (d < 0.5f) { retreatCityId = p.id; break; }
+            }
+        }
+
+        if (retreatCityId >= 0) {
+            SchedulePathTo(*loser, retreatDest, Army::Intent::ENTER_CITY, -1, retreatCityId);
+        }
+        else {
+            SchedulePathTo(*loser, retreatDest, Army::Intent::MOVE);
+        }
 
         Logger::Info("Army '%s' retreating toward (%.1f,%.1f)!",
             loser->generalName.c_str(), retreatDest.x, retreatDest.z);

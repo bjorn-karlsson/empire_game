@@ -311,10 +311,13 @@ void CampaignMap::GenerateTestMap(){
         p.borderVertices=bv;p.center=Centroid(bv);p.cityName=cn;p.cityPos=p.center;
         p.baseIncome=inc;p.isCoastal=co;p.isCapital=cap;p.terrain=ter;
         p.population=inc*80+5000;
-        glm::vec3 bc={0.28f,0.38f,0.75f};
-        if(ter=="forest")bc={0.22f,0.40f,0.60f};if(ter=="hills")bc={0.30f,0.36f,0.68f};
-        if(ter=="mountains")bc={0.32f,0.34f,0.62f};if(ter=="marsh")bc={0.25f,0.42f,0.65f};
-        p.color=bc;return p;
+        glm::vec3 bc={0.32f,0.48f,0.22f};  // default: green grassland
+        if(ter=="forest")  bc={0.20f,0.38f,0.15f};  // darker green
+        if(ter=="hills")   bc={0.40f,0.42f,0.25f};  // yellow-green
+        if(ter=="mountains")bc={0.45f,0.40f,0.30f};  // brown-tan
+        if(ter=="marsh")   bc={0.28f,0.40f,0.25f};  // olive green
+        p.color=bc;
+        return p;
     };
 
     // Provinces (ordered to tile France from north to south)
@@ -366,7 +369,10 @@ void CampaignMap::GenerateTestMap(){
     m_provinces.push_back(mkP(14,"Gascony","Bayonne",
         {iAquGas,cPyrW,cBayo,cBiarr,cBordS},120,true,false,"mountains"));
 
-    for(auto&p:m_provinces){float t=(float)(p.id%5)*0.025f;p.color.r+=t-0.05f;p.color.g+=t*0.3f;}
+    for (auto& p : m_provinces) {
+        float t = (float)(p.id % 7) * 0.015f;
+        p.color.r += t - 0.04f; p.color.g += t * 0.2f - 0.02f; p.color.b += t * 0.1f;
+    }
 
     auto adj=[&](int a,int b){m_provinces[a].neighborIds.push_back(b);m_provinces[b].neighborIds.push_back(a);};
     adj(0,1);adj(0,3);adj(0,4);adj(0,6);adj(0,7);adj(0,13);
@@ -379,19 +385,19 @@ void CampaignMap::GenerateTestMap(){
     #define V(x,z) glm::vec3(x,0.0f,z)
     m_obstacles.push_back({"Alps","mountain",
         {V(6.2f,2.0f),V(7.2f,2.5f),V(7.5f,3.8f),V(7.0f,4.8f),V(6.5f,4.5f),V(6.0f,3.0f)},
-        {},{0.55f,0.50f,0.45f}});
+        {},{0.62f, 0.58f, 0.52f} });
     m_obstacles.push_back({"Pyrenees","mountain",
         {V(-3.5f,7.5f),V(-1.5f,8.0f),V(0.5f,8.2f),V(1.2f,7.8f),V(0.8f,8.5f),V(-1.0f,8.8f),V(-3.2f,8.5f),V(-3.8f,8.0f)},
-        {},{0.50f,0.45f,0.40f}});
+        {},{0.58f, 0.54f, 0.48f}});
     m_obstacles.push_back({"Massif Central","mountain",
         {V(-0.2f,3.0f),V(1.2f,2.8f),V(1.8f,3.5f),V(1.5f,4.8f),V(0.5f,5.0f),V(-0.5f,4.2f)},
-        {},{0.52f,0.48f,0.42f}});
+        {},{0.55f, 0.52f, 0.42f} });
     m_obstacles.push_back({"Jura","mountain",
         {V(5.8f,0.0f),V(6.4f,0.2f),V(6.6f,1.0f),V(6.2f,1.3f),V(5.6f,0.8f)},
-        {},{0.53f,0.48f,0.43f}});
+        {},{0.60f, 0.56f, 0.50f} });
     m_obstacles.push_back({"Lac Leman","lake",
         {V(6.0f,1.2f),V(6.6f,1.0f),V(6.8f,1.5f),V(6.4f,1.8f),V(5.8f,1.5f)},
-        {},{0.15f,0.30f,0.55f}});
+        {},{0.12f, 0.28f, 0.50f} });
     for(auto&ob:m_obstacles)ob.center=Centroid(ob.vertices);
     #undef V
 
@@ -403,44 +409,44 @@ void CampaignMap::GenerateTestMap(){
     m_foreignTerritories.push_back({"Austrian Netherlands",
         {V(0.2f,-5.8f),V(2.5f,-5.5f),V(3.0f,-4.5f),V(4.5f,-4.5f),V(5.5f,-5.0f),
          V(5.5f,-7.0f),V(3.0f,-7.5f),V(0.5f,-7.5f),V(-0.5f,-7.0f),V(-0.5f,-6.0f)},
-        {},{0.60f,0.50f,0.35f}}); // brown/tan
+        {},{0.50f, 0.46f, 0.35f} }); // brown/tan
 
     // United Provinces (Dutch Republic) — far north
     m_foreignTerritories.push_back({"United Provinces",
         {V(2.5f,-7.5f),V(5.0f,-7.5f),V(5.5f,-7.0f),V(5.5f,-9.0f),V(3.5f,-9.5f),
          V(1.5f,-9.0f),V(1.5f,-8.0f)},
-        {},{0.75f,0.50f,0.20f}}); // orange
+        {},{0.45f, 0.50f, 0.35f} }); // orange
 
     // Holy Roman Empire (German states) — east
     m_foreignTerritories.push_back({"Holy Roman Empire",
         {V(5.5f,-5.0f),V(6.5f,-2.0f),V(6.5f,-0.5f),V(6.2f,0.5f),V(7.0f,0.5f),
          V(8.5f,0.0f),V(9.5f,-1.5f),V(9.5f,-4.0f),V(8.0f,-6.0f),V(5.5f,-7.0f)},
-        {},{0.80f,0.75f,0.30f}}); // yellow
+        {},{0.52f, 0.48f, 0.32f} }); // yellow
 
     // Swiss Confederation — small, east
     m_foreignTerritories.push_back({"Swiss Confederation",
         {V(6.5f,0.5f),V(7.0f,0.5f),V(8.2f,0.8f),V(8.5f,1.5f),V(7.5f,2.0f),
          V(6.5f,1.5f)},
-        {},{0.80f,0.30f,0.25f}}); // red
+        {},{0.55f, 0.52f, 0.45f} }); // red
 
     // Kingdom of Sardinia (Savoy-Piedmont) — southeast
     m_foreignTerritories.push_back({"Kingdom of Sardinia",
         {V(6.8f,2.0f),V(7.5f,2.0f),V(8.5f,2.5f),V(9.0f,4.0f),V(8.5f,5.5f),
          V(7.5f,5.5f),V(6.8f,5.0f),V(7.0f,3.5f)},
-        {},{0.30f,0.60f,0.45f}}); // teal
+        {},{0.42f, 0.48f, 0.35f} }); // teal
 
     // Kingdom of Spain — south of Pyrenees
     m_foreignTerritories.push_back({"Kingdom of Spain",
         {V(-4.2f,7.3f),V(-3.0f,7.8f),V(-1.0f,8.2f),V(0.8f,8.0f),V(1.5f,7.5f),
          V(2.5f,8.0f),V(3.0f,9.5f),V(1.0f,11.0f),V(-2.0f,11.5f),V(-4.5f,11.0f),
          V(-6.0f,9.5f),V(-5.5f,8.0f),V(-4.5f,7.5f)},
-        {},{0.70f,0.50f,0.20f}}); // warm brown/orange
+        {},{0.58f, 0.50f, 0.32f} }); // warm brown/orange
 
     // England (small strip across Channel)
     m_foreignTerritories.push_back({"Kingdom of England",
         {V(-5.0f,-7.5f),V(-2.0f,-8.0f),V(0.5f,-7.5f),V(1.5f,-8.0f),
          V(2.0f,-9.5f),V(-1.0f,-10.0f),V(-4.0f,-9.5f),V(-6.0f,-8.5f)},
-        {},{0.75f,0.25f,0.25f}}); // red
+        {},{0.40f, 0.48f, 0.32f} }); // red
 
     for(auto&ft:m_foreignTerritories)ft.center=Centroid(ft.vertices);
     #undef V

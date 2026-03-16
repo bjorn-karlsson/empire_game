@@ -29,7 +29,7 @@ Renderer::~Renderer(){
 bool Renderer::Init(){
     glEnable(GL_DEPTH_TEST);glEnable(GL_MULTISAMPLE);glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);glEnable(GL_LINE_SMOOTH);
-    glEnable(GL_STENCIL_TEST);glClearColor(0.05f,0.08f,0.15f,1);
+    glEnable(GL_STENCIL_TEST); glClearColor(0.03f, 0.06f, 0.12f, 1);
     m_camera=std::make_unique<Camera>((float)m_width/m_height);
     InitShaders();BuildWaterPlane();BuildArmyMarker();BuildCircle();
 
@@ -158,89 +158,314 @@ void Renderer::BuildArmyMarker(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-void Renderer::InitShaders(){
-    m_provinceShader=std::make_unique<Shader>();
+// ═══════════════════════════════════════════════════════════════
+// Shaders
+// ═══════════════════════════════════════════════════════════════
+void Renderer::InitShaders() {
+
+    // ── PROVINCE SHADER: Procedural terrain with noise, lighting, edge darkening ──
+    m_provinceShader = std::make_unique<Shader>();
     m_provinceShader->LoadFromSource(
-    R"(#version 330 core
-    layout(location=0)in vec3 aPos;layout(location=1)in vec2 aEdge;uniform mat4 u_VP;out vec3 v_W;out float v_E;
-    void main(){v_W=aPos;v_E=aEdge.x;gl_Position=u_VP*vec4(aPos,1);})",
-    R"(#version 330 core
-    in vec3 v_W;in float v_E;uniform vec3 u_Color;out vec4 FC;
-    void main(){vec3 p=vec3(0.82,0.75,0.62);vec3 c=mix(u_Color,p,0.3);
-    float e=smoothstep(0.55,0.95,v_E);c*=(1.0-e*0.3);c+=sin(v_W.x*4.1)*cos(v_W.z*3.3)*0.03;FC=vec4(c,1);})");
+        R"(#version 330 core
+    layout(location=0)in vec3 aPos;
+    layout(location=1)in vec2 aEdge;
+    uniform mat4 u_VP;
+    out vec3 v_W;
+    out float v_E;
+    void main(){
+        v_W = aPos;
+        v_E = aEdge.x;
+        gl_Position = u_VP * vec4(aPos, 1.0);
+    })",
 
-    m_borderShader=std::make_unique<Shader>();
+        R"(#version 330 core
+    in vec3 v_W;
+    in float v_E;
+    uniform vec3 u_Color;
+    out vec4 FC;
+
+    // Simple hash-based noise (no texture needed)
+    float hash(vec2 p){
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+    float noise(vec2 p){
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f); // smoothstep
+        float a = hash(i);
+        float b = hash(i + vec2(1,0));
+        float c = hash(i + vec2(0,1));
+        float d = hash(i + vec2(1,1));
+        return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
+    }
+    float fbm(vec2 p){
+        float v = 0.0;
+        float a = 0.5;
+        for(int i = 0; i < 5; i++){
+            v += a * noise(p);
+            p *= 2.1;
+            a *= 0.5;
+        }
+        return v;
+    }
+
+    void main(){
+        // Base terrain color (greener, more natural)
+        vec3 grassGreen = vec3(0.35, 0.52, 0.22);
+        vec3 dryGrass   = vec3(0.55, 0.50, 0.30);
+        vec3 darkEarth  = vec3(0.30, 0.25, 0.18);
+
+        // Procedural terrain variation
+        float n1 = fbm(v_W.xz * 3.0);
+        float n2 = fbm(v_W.xz * 8.0 + 42.0);
+        float n3 = noise(v_W.xz * 25.0);
+
+        // Mix between grass tones based on noise
+        vec3 terrain = mix(grassGreen, dryGrass, n1 * 0.7);
+        terrain = mix(terrain, darkEarth, n2 * 0.15);
+
+        // Tint with faction color (subtle — 25%)
+        vec3 col = mix(terrain, u_Color, 0.25);
+
+        // Fine detail grain
+        col += (n3 - 0.5) * 0.04;
+
+        // Edge darkening (province borders)
+        float edge = smoothstep(0.5, 0.95, v_E);
+        col *= (1.0 - edge * 0.35);
+
+        // Simple directional light from northwest
+        vec3 lightDir = normalize(vec3(-0.5, 1.0, -0.3));
+        // Fake normal from noise gradient
+        float eps = 0.1;
+        float hL = fbm((v_W.xz + vec2(-eps, 0)) * 3.0);
+        float hR = fbm((v_W.xz + vec2(eps, 0)) * 3.0);
+        float hD = fbm((v_W.xz + vec2(0, -eps)) * 3.0);
+        float hU = fbm((v_W.xz + vec2(0, eps)) * 3.0);
+        vec3 normal = normalize(vec3(hL - hR, 0.3, hD - hU));
+        float NdotL = max(dot(normal, lightDir), 0.0);
+        float lighting = 0.55 + 0.45 * NdotL;
+        col *= lighting;
+
+        // Atmospheric fog (distance-based blueish tint)
+        float dist = length(v_W.xz);
+        float fog = smoothstep(8.0, 18.0, dist);
+        vec3 fogColor = vec3(0.45, 0.52, 0.62);
+        col = mix(col, fogColor, fog * 0.25);
+
+        FC = vec4(col, 1.0);
+    })");
+
+    // ── BORDER SHADER: Simple flat color (also used for obstacles) ──
+    m_borderShader = std::make_unique<Shader>();
     m_borderShader->LoadFromSource(
-    R"(#version 330 core
-    layout(location=0)in vec3 aPos;uniform mat4 u_VP;void main(){gl_Position=u_VP*vec4(aPos,1);})",
-    R"(#version 330 core
-    uniform vec3 u_Color;out vec4 FC;void main(){FC=vec4(u_Color,1);})");
+        R"(#version 330 core
+    layout(location=0)in vec3 aPos;
+    uniform mat4 u_VP;
+    out vec3 v_W;
+    void main(){
+        v_W = aPos;
+        gl_Position = u_VP * vec4(aPos, 1.0);
+    })",
 
-    m_waterShader=std::make_unique<Shader>();
+        R"(#version 330 core
+    in vec3 v_W;
+    uniform vec3 u_Color;
+    out vec4 FC;
+
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+    float noise(vec2 p){
+        vec2 i=floor(p); vec2 f=fract(p);
+        f=f*f*(3.0-2.0*f);
+        return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
+                   mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+    }
+    float fbm(vec2 p){
+        float v=0.0, a=0.5;
+        for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.1; a*=0.5; }
+        return v;
+    }
+
+    void main(){
+        // Procedural rocky texture for mountains/obstacles
+        float n = fbm(v_W.xz * 5.0);
+        float n2 = noise(v_W.xz * 20.0);
+        vec3 col = u_Color;
+
+        // Add rocky variation
+        col += (n - 0.5) * 0.15;
+        col += (n2 - 0.5) * 0.05;
+
+        // Slight lighting
+        vec3 lightDir = normalize(vec3(-0.5, 1.0, -0.3));
+        float eps = 0.08;
+        float hL = fbm((v_W.xz+vec2(-eps,0))*5.0);
+        float hR = fbm((v_W.xz+vec2(eps,0))*5.0);
+        float hD = fbm((v_W.xz+vec2(0,-eps))*5.0);
+        float hU = fbm((v_W.xz+vec2(0,eps))*5.0);
+        vec3 normal = normalize(vec3(hL-hR, 0.25, hD-hU));
+        float lit = 0.5 + 0.5 * max(dot(normal, lightDir), 0.0);
+        col *= lit;
+
+        FC = vec4(col, 1.0);
+    })");
+
+    // ── WATER SHADER: Deep ocean with waves, foam, and reflections ──
+    m_waterShader = std::make_unique<Shader>();
     m_waterShader->LoadFromSource(
-    R"(#version 330 core
-    layout(location=0)in vec3 aPos;uniform mat4 u_VP;uniform float u_Time;out vec3 v_W;
-    void main(){vec3 p=aPos;p.y+=sin(p.x*0.4+u_Time*0.7)*cos(p.z*0.3+u_Time*0.5)*0.06+sin(p.x*0.8-u_Time*0.4)*0.03;
-    v_W=p;gl_Position=u_VP*vec4(p,1);})",
-    R"(#version 330 core
-    in vec3 v_W;uniform float u_Time;out vec4 FC;
-    void main(){vec3 d=vec3(0.03,0.06,0.14),m=vec3(0.06,0.12,0.25),b=vec3(0.10,0.18,0.35);
-    float w1=sin(v_W.x*0.8+u_Time*0.6)*cos(v_W.z*0.6+u_Time*0.4);
-    float w2=sin(v_W.x*1.5-u_Time*0.3+v_W.z*0.9)*0.5+0.5;float w3=sin(v_W.x*2.2+u_Time*1.1)*cos(v_W.z*1.8-u_Time*0.7)*0.5+0.5;
-    float w=w1*0.4+w2*0.35+w3*0.25;w=w*0.5+0.5;vec3 c=mix(d,m,w*0.6);c=mix(c,b,w3*0.3);
-    float s=pow(max(w,0.0),6.0)*0.2;c+=vec3(s*0.6,s*0.7,s);FC=vec4(c,1);})");
+        R"(#version 330 core
+    layout(location=0)in vec3 aPos;
+    uniform mat4 u_VP;
+    uniform float u_Time;
+    out vec3 v_W;
+    void main(){
+        vec3 p = aPos;
+        // Vertex wave displacement
+        float wave1 = sin(p.x * 1.5 + u_Time * 0.8) * cos(p.z * 1.2 + u_Time * 0.6) * 0.04;
+        float wave2 = sin(p.x * 3.0 - u_Time * 1.2) * sin(p.z * 2.5 + u_Time * 0.9) * 0.02;
+        p.y += wave1 + wave2;
+        v_W = p;
+        gl_Position = u_VP * vec4(p, 1.0);
+    })",
 
-    m_armyShader=std::make_unique<Shader>();
+        R"(#version 330 core
+    in vec3 v_W;
+    uniform float u_Time;
+    out vec4 FC;
+
+    float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+    float noise(vec2 p){
+        vec2 i=floor(p); vec2 f=fract(p);
+        f=f*f*(3.0-2.0*f);
+        return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
+                   mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+    }
+
+    void main(){
+        vec2 uv = v_W.xz;
+
+        // Deep ocean base color
+        vec3 deepWater  = vec3(0.05, 0.12, 0.22);
+        vec3 shallowWater = vec3(0.10, 0.25, 0.38);
+        vec3 highlight  = vec3(0.20, 0.40, 0.55);
+
+        // Animated wave pattern
+        float wave1 = sin(uv.x * 2.5 + u_Time * 0.7) * cos(uv.y * 2.0 + u_Time * 0.5);
+        float wave2 = sin(uv.x * 5.0 - u_Time * 1.1 + uv.y * 3.0) * 0.5;
+        float wave3 = noise(uv * 4.0 + u_Time * 0.3) * 0.4;
+        float waves = wave1 * 0.3 + wave2 * 0.2 + wave3;
+
+        // Depth variation
+        float depth = noise(uv * 0.5) * 0.5 + 0.5;
+        vec3 col = mix(deepWater, shallowWater, depth * 0.6);
+
+        // Wave highlights (specular-like)
+        float spec = smoothstep(0.3, 0.8, waves);
+        col = mix(col, highlight, spec * 0.4);
+
+        // Bright caustic-like sparkles
+        float sparkle = noise(uv * 15.0 + u_Time * vec2(0.5, 0.3));
+        sparkle = pow(sparkle, 4.0) * 0.3;
+        col += vec3(sparkle * 0.5, sparkle * 0.7, sparkle);
+
+        // Distance fog (deeper = darker)
+        float dist = length(uv);
+        float fogAmount = smoothstep(5.0, 25.0, dist);
+        vec3 fogColor = vec3(0.03, 0.06, 0.12);
+        col = mix(col, fogColor, fogAmount * 0.5);
+
+        // Slight transparency near edges
+        float alpha = 0.92;
+
+        FC = vec4(col, alpha);
+    })");
+
+    // ── ARMY MARKER SHADER: Lit 3D objects ──
+    m_armyShader = std::make_unique<Shader>();
     m_armyShader->LoadFromSource(
-    R"(#version 330 core
-    layout(location=0)in vec3 aPos;uniform mat4 u_VP;uniform mat4 u_Model;out vec3 v_L;
-    void main(){v_L=aPos;gl_Position=u_VP*u_Model*vec4(aPos,1);})",
-    R"(#version 330 core
-    in vec3 v_L;uniform vec3 u_Color;uniform float u_Selected;out vec4 FC;
-    void main(){float s=0.5+0.5*clamp(v_L.y*2.5,0,1);vec3 c=u_Color*s;
-    if(u_Selected>0.5)c=mix(c,vec3(1,0.95,0.4),0.6);FC=vec4(c,1);})");
+        R"(#version 330 core
+    layout(location=0)in vec3 aPos;
+    uniform mat4 u_VP;
+    uniform mat4 u_Model;
+    out vec3 v_Pos;
+    out vec3 v_Normal;
+    void main(){
+        vec4 worldPos = u_Model * vec4(aPos, 1.0);
+        v_Pos = worldPos.xyz;
+        // Approximate normal from position (for simple shapes)
+        v_Normal = normalize(mat3(u_Model) * aPos);
+        gl_Position = u_VP * worldPos;
+    })",
 
-    m_overlayShader=std::make_unique<Shader>();
+        R"(#version 330 core
+    in vec3 v_Pos;
+    in vec3 v_Normal;
+    uniform vec3 u_Color;
+    uniform float u_Selected;
+    out vec4 FC;
+    void main(){
+        // Directional light
+        vec3 lightDir = normalize(vec3(-0.4, 0.8, -0.3));
+        float NdotL = max(dot(normalize(v_Normal), lightDir), 0.0);
+        float lighting = 0.4 + 0.6 * NdotL;
+
+        vec3 col = u_Color * lighting;
+
+        // Selection glow
+        if(u_Selected > 0.5){
+            col += vec3(0.15, 0.3, 0.1) * (0.5 + 0.5 * sin(v_Pos.y * 10.0));
+        }
+
+        FC = vec4(col, 1.0);
+    })");
+
+    // ── OVERLAY SHADER (movement mesh, selection circle, path arrows) ──
+    m_overlayShader = std::make_unique<Shader>();
     m_overlayShader->LoadFromSource(
-    R"(#version 330 core
-    layout(location=0)in vec3 aPos;uniform mat4 u_VP;uniform mat4 u_Model;
+        R"(#version 330 core
+    layout(location=0)in vec3 aPos;
+    uniform mat4 u_VP;
+    uniform mat4 u_Model;
     void main(){gl_Position=u_VP*u_Model*vec4(aPos,1);})",
-    R"(#version 330 core
-    uniform vec4 u_Color;out vec4 FC;void main(){FC=u_Color;})");
+        R"(#version 330 core
+    uniform vec4 u_Color;
+    out vec4 FC;
+    void main(){FC=u_Color;})");
 
-    // Screen-space HUD shader (NDC coordinates: -1 to 1)
-    m_screenShader=std::make_unique<Shader>();
+    // ── SCREEN QUAD SHADER (for HUD rectangles) ──
+    m_screenShader = std::make_unique<Shader>();
     m_screenShader->LoadFromSource(
-    R"(#version 330 core
+        R"(#version 330 core
     layout(location=0)in vec2 aPos;
     uniform vec4 u_Rect;
     uniform vec4 u_Screen;
     void main(){
-        vec2 p = aPos * u_Rect.zw + u_Rect.xy;
+        vec2 p = u_Rect.xy + aPos * u_Rect.zw;
         vec2 ndc = (p / u_Screen.xy) * 2.0 - 1.0;
         ndc.y = -ndc.y;
-        gl_Position = vec4(ndc, 0, 1);
+        gl_Position = vec4(ndc, 0.0, 1.0);
     })",
-    R"(#version 330 core
-    uniform vec4 u_Color;out vec4 FC;void main(){FC=u_Color;})");
+        R"(#version 330 core
+    uniform vec4 u_Color;
+    out vec4 FC;
+    void main(){FC=u_Color;})");
 
-    // Text shader — renders bitmap font quads
-    m_textShader=std::make_unique<Shader>();
+    // ── TEXT SHADER (bitmap font rendering) ──
+    m_textShader = std::make_unique<Shader>();
     m_textShader->LoadFromSource(
-    R"(#version 330 core
+        R"(#version 330 core
     layout(location=0)in vec2 aPos;
     layout(location=1)in vec2 aUV;
     uniform vec4 u_Rect;
     uniform vec4 u_Screen;
     out vec2 v_UV;
     void main(){
-        vec2 p = aPos * u_Rect.zw + u_Rect.xy;
-        vec2 ndc = (p / u_Screen.xy) * 2.0 - 1.0;
-        ndc.y = -ndc.y;
-        gl_Position = vec4(ndc, 0, 1);
         v_UV = aUV;
+        vec2 ndc = (aPos / u_Screen.xy) * 2.0 - 1.0;
+        ndc.y = -ndc.y;
+        gl_Position = vec4(ndc, 0.0, 1.0);
     })",
-    R"(#version 330 core
+        R"(#version 330 core
     in vec2 v_UV;
     uniform sampler2D u_Font;
     uniform vec4 u_Color;
@@ -251,7 +476,6 @@ void Renderer::InitShaders(){
         FC = u_Color;
     })");
 }
-
 // ═══════════════════════════════════════════════════════════════
 // RENDER
 // ═══════════════════════════════════════════════════════════════
@@ -302,15 +526,26 @@ void Renderer::RenderObstacles(const CampaignMap&map){
 }
 
 void Renderer::RenderBorders(const CampaignMap&map){
-    m_borderShader->Use();m_borderShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
+    m_borderShader->Use();
+    m_borderShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
     const Faction*pl=map.GetPlayerFaction();
-    for(const auto&p:map.GetProvinces()){auto it=m_provinceGPUs.find(p.id);if(it==m_provinceGPUs.end())continue;
+    for(const auto&p:map.GetProvinces()){
+        auto it=m_provinceGPUs.find(p.id);
+        if(it==m_provinceGPUs.end())continue;
         bool own=(pl&&p.ownerFactionId==pl->id);
-        if(own){m_borderShader->SetVec3("u_Color",{0.2f,0.55f,0.2f});glLineWidth(2);}
-        else{m_borderShader->SetVec3("u_Color",{0.15f,0.12f,0.08f});glLineWidth(1.5f);}
-        glBindVertexArray(it->second.borderVAO);glDrawArrays(GL_LINE_STRIP,0,it->second.borderVertexCount);}
+        if(own){
+            m_borderShader->SetVec3("u_Color",{0.25f,0.50f,0.20f});
+            glLineWidth(2.5f);
+        } else {
+            m_borderShader->SetVec3("u_Color",{0.20f,0.18f,0.12f});
+            glLineWidth(1.5f);
+        }
+        glBindVertexArray(it->second.borderVAO);
+        glDrawArrays(GL_LINE_STRIP,0,it->second.borderVertexCount);
+    }
     glBindVertexArray(0);glLineWidth(1);
 }
+
 
 // ── Movement mesh: green overlay from flood-fill cells ────────
 // ── Screen-space text using bitmap font ───────────────────────
@@ -365,11 +600,11 @@ void Renderer::DrawWorldText(const std::string&text,glm::vec3 worldPos,float sca
 
 // ── Foreign territories (surrounding countries) ───────────────
 void Renderer::RenderForeignTerritories(const CampaignMap&map){
-    m_borderShader->Use();m_borderShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
+    m_borderShader->Use();
+    m_borderShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
     auto&fts=map.GetForeignTerritories();
     for(int i=0;i<(int)fts.size()&&i<(int)m_foreignGPUs.size();i++){
-        // Darker, desaturated colors for foreign land
-        glm::vec3 c=fts[i].color*0.4f;
+        glm::vec3 c=fts[i].color * 0.65f; // less aggressive darkening
         m_borderShader->SetVec3("u_Color",c);
         glBindVertexArray(m_foreignGPUs[i].VAO);
         glDrawArrays(GL_TRIANGLES,0,m_foreignGPUs[i].vertexCount);
@@ -534,7 +769,7 @@ void Renderer::RenderCities(const CampaignMap&map){
     for(const auto&p:map.GetProvinces()){
         glm::mat4 m=glm::translate(glm::mat4(1),p.cityPos);float sc=p.isCapital?1.8f:0.9f;m=glm::scale(m,glm::vec3(sc));
         m_armyShader->SetMat4("u_Model",m);
-        m_armyShader->SetVec3("u_Color",p.isCapital?glm::vec3(0.9f,0.8f,0.55f):glm::vec3(0.65f,0.58f,0.48f));
+        m_armyShader->SetVec3("u_Color",p.isCapital ? glm::vec3(0.85f,0.75f,0.50f) : glm::vec3(0.55f,0.48f,0.38f));
         m_armyShader->SetFloat("u_Selected",(p.id==map.GetSelectedProvinceId())?1.f:0.f);
         glDrawArrays(GL_TRIANGLES,0,30);}
     glBindVertexArray(0);

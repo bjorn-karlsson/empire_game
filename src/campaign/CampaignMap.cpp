@@ -1348,10 +1348,6 @@ void CampaignMap::CaptureProvince(int provinceId,const std::string&newOwner){
     if(newF){
         newF->ownedProvinces.push_back(provinceId);
         prov->ownerFactionId=newOwner;
-        prov->color=newF->color;
-        // Apply per-province tint
-        float t=(float)(prov->id%5)*0.025f;
-        prov->color.r+=t-0.05f;prov->color.g+=t*0.3f;
     }
 
     SetNotification(prov->name+" captured by "+(newF?newF->name:newOwner)+"!");

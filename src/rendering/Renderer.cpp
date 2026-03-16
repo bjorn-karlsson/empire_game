@@ -526,26 +526,120 @@ void Renderer::RenderObstacles(const CampaignMap&map){
 }
 
 void Renderer::RenderBorders(const CampaignMap&map){
-    m_borderShader->Use();
-    m_borderShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
-    const Faction*pl=map.GetPlayerFaction();
-    for(const auto&p:map.GetProvinces()){
-        auto it=m_provinceGPUs.find(p.id);
-        if(it==m_provinceGPUs.end())continue;
-        bool own=(pl&&p.ownerFactionId==pl->id);
-        if(own){
-            m_borderShader->SetVec3("u_Color",{0.25f,0.50f,0.20f});
-            glLineWidth(2.5f);
-        } else {
-            m_borderShader->SetVec3("u_Color",{0.20f,0.18f,0.12f});
-            glLineWidth(1.5f);
-        }
-        glBindVertexArray(it->second.borderVAO);
-        glDrawArrays(GL_LINE_STRIP,0,it->second.borderVertexCount);
-    }
-    glBindVertexArray(0);glLineWidth(1);
-}
+    m_overlayShader->Use();
+    m_overlayShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
+    m_overlayShader->SetMat4("u_Model",glm::mat4(1.0f));
 
+    const Faction*player=map.GetPlayerFaction();
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    if(!player)return;
+
+    float borderY = 0.005f;
+    float insetAmount=0.03f; // how far inward the line is drawn from the actual edge
+
+    // Helper: check if a point is on land (inside any province or foreign territory)
+    auto isOnLand=[&](glm::vec2 pt)->bool{
+        for(const auto&p:map.GetProvinces()){
+            // Quick bounding check then PtInPoly
+            bool inside=false;
+            int n=(int)p.borderVertices.size();
+            for(int i=0,j=n-1;i<n;j=i++){
+                float zi=p.borderVertices[i].z, zj=p.borderVertices[j].z;
+                float xi=p.borderVertices[i].x, xj=p.borderVertices[j].x;
+                if(((zi>pt.y)!=(zj>pt.y))&&(pt.x<(xj-xi)*(pt.y-zi)/(zj-zi)+xi))
+                    inside=!inside;
+            }
+            if(inside)return true;
+        }
+        for(const auto&ft:map.GetForeignTerritories()){
+            bool inside=false;
+            int n=(int)ft.vertices.size();
+            for(int i=0,j=n-1;i<n;j=i++){
+                float zi=ft.vertices[i].z, zj=ft.vertices[j].z;
+                float xi=ft.vertices[i].x, xj=ft.vertices[j].x;
+                if(((zi>pt.y)!=(zj>pt.y))&&(pt.x<(xj-xi)*(pt.y-zi)/(zj-zi)+xi))
+                    inside=!inside;
+            }
+            if(inside)return true;
+        }
+        return false;
+    };
+
+    // Diplomatic color based on province owner's relation to player
+    auto getDiploColor=[&](const Province&p)->glm::vec4{
+        if(p.ownerFactionId==player->id)
+            return {0.2f,0.7f,0.2f,1.0f}; // own = green
+
+        const Faction*f=map.GetFaction(p.ownerFactionId);
+        if(!f) return {0.8f,0.8f,0.8f,0.7f}; // unknown = white
+
+        DiplomaticStatus status=f->GetRelationWith(player->id);
+        switch(status){
+            case DiplomaticStatus::WAR:
+                return {0.85f,0.15f,0.1f,1.0f};  // war = red
+            case DiplomaticStatus::ALLIANCE:
+                return {0.2f,0.35f,0.85f,1.0f};   // ally = blue
+            case DiplomaticStatus::TRADE_AGREEMENT:
+                return {0.3f,0.6f,0.85f,0.9f};    // trade = light blue
+            default:
+                return {0.8f,0.8f,0.75f,0.7f};    // neutral = white/cream
+        }
+    };
+
+    // Draw each province's border as an inset line
+    for(const auto&p:map.GetProvinces()){
+        glm::vec4 col=getDiploColor(p);
+        int n=(int)p.borderVertices.size();
+        if(n<3)continue;
+
+        glm::vec2 center2D(p.center.x,p.center.z);
+
+        // Build inset + filtered border vertices
+        std::vector<float> verts;
+        int drawn=0;
+
+        for(int i=0;i<n;i++){
+            glm::vec2 v0(p.borderVertices[i].x, p.borderVertices[i].z);
+            glm::vec2 v1(p.borderVertices[(i+1)%n].x, p.borderVertices[(i+1)%n].z);
+
+            // Check if this edge is coastal (midpoint not on any OTHER land)
+            glm::vec2 mid=(v0+v1)*0.5f;
+            // Offset midpoint slightly outward to test the other side
+            glm::vec2 toCenter=glm::normalize(center2D-mid);
+            glm::vec2 testPt=mid-toCenter*0.15f; // slightly outside the province
+
+            bool isCoastalEdge=!isOnLand(testPt);
+            if(isCoastalEdge)continue; // skip water borders
+
+            // Inset both vertices toward center
+            glm::vec2 inV0=v0+glm::normalize(center2D-v0)*insetAmount;
+            glm::vec2 inV1=v1+glm::normalize(center2D-v1)*insetAmount;
+
+            verts.insert(verts.end(),{inV0.x, borderY, inV0.y});
+            verts.insert(verts.end(),{inV1.x, borderY, inV1.y});
+            drawn++;
+        }
+
+        if(drawn<1)continue;
+
+        glBindVertexArray(m_pathVAO);glBindBuffer(GL_ARRAY_BUFFER,m_pathVBO);
+        glBufferData(GL_ARRAY_BUFFER,verts.size()*sizeof(float),verts.data(),GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);
+        glEnableVertexAttribArray(0);
+
+        m_overlayShader->SetVec4("u_Color",col);
+
+        bool isOwn=(p.ownerFactionId==player->id);
+        glLineWidth(isOwn?3.0f:2.0f);
+        glDrawArrays(GL_LINES,0,(int)verts.size()/3);
+    }
+
+    glBindVertexArray(0);
+    glLineWidth(1);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+}
 
 // ── Movement mesh: green overlay from flood-fill cells ────────
 // ── Screen-space text using bitmap font ───────────────────────

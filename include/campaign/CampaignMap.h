@@ -34,9 +34,9 @@ struct ForeignTerritory {
 // Each cell is passable or not. A* finds shortest path on this grid.
 struct NavGrid {
     static constexpr float CELL = 0.3f;        // cell size in world units
-    static constexpr int W = 80, H = 80;       // grid dimensions
-    static constexpr float OX = -10.0f;        // world origin X
-    static constexpr float OZ = -7.0f;         // world origin Z
+    static constexpr int W = 120, H = 120;
+    static constexpr float OX = -12.0f;
+    static constexpr float OZ = -12.0f;
     bool passable[W][H] = {};
 
     int toGX(float x) const { return glm::clamp((int)((x-OX)/CELL),0,W-1); }
@@ -60,6 +60,9 @@ public:
     void GenerateTestMap();
     void Update(float dt, const InputManager&);
     void ProcessTurn();
+
+    // Terrain height at world position (matches shader displacement)
+    float GetTerrainHeight(float x, float z) const;
 
     Province* GetProvince(int id);
     const Province* GetProvince(int id) const;

@@ -237,312 +237,606 @@ std::vector<ReachableCell> CampaignMap::GetReachableCells(int armyId)const{
     }
     return result;
 }
+static float fract(float x) { return x - floorf(x); }
+static float s_hash(float x, float y) { return fract(sinf(x * 127.1f + y * 311.7f) * 43758.5453f); }
+static float s_noise(float x, float z) {
+    float ix = floorf(x), iz = floorf(z);
+    float fx = x - ix, fz = z - iz;
+    fx = fx * fx * (3 - 2 * fx); fz = fz * fz * (3 - 2 * fz);
+    float a = s_hash(ix, iz), b = s_hash(ix + 1, iz);
+    float c = s_hash(ix, iz + 1), d = s_hash(ix + 1, iz + 1);
+    return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
+}
+static float s_fbm(float x, float z) {
+    float v = 0, a = 0.5f;
+    for (int i = 0; i < 4; i++) { v += a * s_noise(x, z); x *= 2.1f; z *= 2.1f; a *= 0.5f; }
+    return v;
+}
+
+
+float CampaignMap::GetTerrainHeight(float x, float z)const {
+    float h = s_fbm(x * 1.5f, z * 1.5f) * 0.25f;
+    h += s_fbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.08f;
+    h += s_noise(x * 10.0f, z * 10.0f) * 0.02f;
+    return h;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // MAP GENERATION (same provinces + obstacles as before)
 // ═══════════════════════════════════════════════════════════════
-void CampaignMap::GenerateTestMap(){
-    Logger::Info("Generating France campaign...");
-
-    {Faction f;f.id="france";f.name="France";f.leaderName="Louis XV";
-     f.color={0.28f,0.38f,0.75f};f.isPlayerControlled=true;f.treasury=12000;
-     m_factions.push_back(f);}
+void CampaignMap::GenerateTestMap() {
+    Logger::Info("Generating Europe campaign...");
 
     // ═══════════════════════════════════════════════════════════
-    // FRANCE MAP — Geographically accurate province outlines
-    // Coordinate system: X=west(-)/east(+), Z=north(-)/south(+)
-    // Coastline vertices (c=coast), Internal borders (i=internal)
+    // FACTIONS
     // ═══════════════════════════════════════════════════════════
-    #define V(x,z) glm::vec3(x,0.0f,z)
-    // ── Coastline (clockwise from Dunkirk) ──
-    glm::vec3
-        // North coast (Channel)
-        cDunk=V(2.5,-5.5), cCalais=V(1.2,-5.8), cBoul=V(0.2,-5.3),
-        cDiep=V(-1.0,-4.8), cLeHav=V(-2.2,-4.5), cCherb=V(-3.8,-5.2),
-        // Brittany peninsula
-        cStMalo=V(-4.8,-3.8), cStBri=V(-6.5,-3.5), cBrest=V(-8.2,-2.5),
-        cQuimp=V(-7.8,-1.2), cLori=V(-6.8,-0.5),
-        // West coast (Atlantic)
-        cNant=V(-5.8,0.5), cRoch=V(-5.5,2.5), cBordW=V(-5.0,4.0),
-        cBordS=V(-4.5,5.5),
-        // Southwest coast (Bay of Biscay)
-        cBiarr=V(-4.2,6.8), cBayo=V(-3.8,7.3),
-        // Pyrenees border (south)
-        cPyrW=V(-3.0,7.8), cPyrM=V(-1.0,8.2), cPyrE=V(0.8,8.0),
-        cPerp=V(1.5,7.5),
-        // Mediterranean coast
-        cNarb=V(2.5,7.2), cMontp=V(3.5,6.8), cMars=V(4.8,6.5),
-        cToulon=V(5.5,6.0), cNice=V(6.8,5.0),
-        // Alps/East border (going north)
-        cAlpS=V(7.0,3.5), cGenev=V(6.5,1.5), cJura=V(6.2,0.5),
-        cBasel=V(6.5,-0.5), cStras=V(6.5,-2.0),
-        cMetz=V(5.5,-3.5), cLille=V(3.0,-4.5);
-    // ── Internal border junctions ──
-    glm::vec3
-        // Row 1: north tier
-        iNrmBrt=V(-4.5,-2.5),  // Normandy-Brittany
-        iNrmIdF=V(-1.5,-2.5),  // Normandy-IleDF
-        iPicChm=V(2.0,-3.2),   // Picardy-Champagne
-        // Row 2: mid-north
-        iIdFLoi=V(-2.0,-0.5),  // IleDF-Loire
-        iIdFBur=V(0.5,-0.5),   // IleDF-Burgundy
-        iChmAlsW=V(4.2,-2.0),  // Champagne-Alsace west
-        iAlsBurN=V(4.8,-0.5),  // Alsace-Burgundy north
-        // Row 3: center
-        iBrtPoi=V(-5.0,1.0),   // Brittany-Poitou
-        iLoiPoi=V(-3.0,1.5),   // Loire-Poitou
-        iLoiAuv=V(-0.5,1.5),   // Loire-Auvergne
-        iBurDau=V(3.5,1.0),    // Burgundy-Dauphine
-        iDauAlp=V(5.5,1.5),    // Dauphine-Alps junction
-        // Row 4: south-center
-        iPoiAqu=V(-3.5,3.5),   // Poitou-Aquitaine
-        iAuvLan=V(1.0,4.5),    // Auvergne-Languedoc
-        iAuvPro=V(3.0,4.0),    // Auvergne-Provence
-        iDauPro=V(5.0,3.5),    // Dauphine-Provence
-        // Row 5: south
-        iAquGas=V(-3.0,5.5),   // Aquitaine-Gascony
-        iAquLan=V(-0.5,6.0),   // Aquitaine-Languedoc
-        iLanPro=V(3.5,5.5);    // Languedoc-Provence
-    #undef V
 
-    auto mkP=[&](int id,const std::string&nm,const std::string&cn,
-        std::vector<glm::vec3>bv,int inc,bool co,bool cap,const std::string&ter="plains"){
-        Province p;p.id=id;p.name=nm;p.ownerFactionId="france";
-        p.borderVertices=bv;p.center=Centroid(bv);p.cityName=cn;p.cityPos=p.center;
-        p.baseIncome=inc;p.isCoastal=co;p.isCapital=cap;p.terrain=ter;
-        p.population=inc*80+5000;
-        glm::vec3 bc={0.32f,0.48f,0.22f};  // default: green grassland
-        if(ter=="forest")  bc={0.20f,0.38f,0.15f};  // darker green
-        if(ter=="hills")   bc={0.40f,0.42f,0.25f};  // yellow-green
-        if(ter=="mountains")bc={0.45f,0.40f,0.30f};  // brown-tan
-        if(ter=="marsh")   bc={0.28f,0.40f,0.25f};  // olive green
-        p.color=bc;
-        return p;
-    };
-
-    // Provinces (ordered to tile France from north to south)
-    // 0: Île-de-France (Paris) — center-north
-    m_provinces.push_back(mkP(0,"Ile-de-France","Paris",
-        {iNrmIdF,iPicChm,iIdFBur,iLoiAuv,iIdFLoi},500,false,true));
-    // 1: Normandy — northwest coast
-    m_provinces.push_back(mkP(1,"Normandy","Rouen",
-        {cCherb,cLeHav,cDiep,iNrmIdF,iIdFLoi,iNrmBrt,cStMalo},300,true,false));
-    // 2: Brittany — far west peninsula
-    m_provinces.push_back(mkP(2,"Brittany","Rennes",
-        {cStMalo,iNrmBrt,iIdFLoi,iBrtPoi,cNant,cLori,cQuimp,cBrest,cStBri},200,true,false,"hills"));
-    // 3: Picardy — northeast coast
-    m_provinces.push_back(mkP(3,"Picardy","Amiens",
-        {cDiep,cBoul,cCalais,cDunk,cLille,iPicChm,iNrmIdF},280,true,false));
-    // 4: Champagne — north-center-east
-    m_provinces.push_back(mkP(4,"Champagne","Reims",
-        {iPicChm,cLille,cMetz,iChmAlsW,iAlsBurN,iIdFBur},250,false,false));
-    // 5: Alsace-Lorraine — far east
-    m_provinces.push_back(mkP(5,"Alsace-Lorraine","Strasbourg",
-        {iChmAlsW,cMetz,cStras,cBasel,cJura,iDauAlp,iBurDau,iAlsBurN},220,false,false,"hills"));
-    // 6: Loire Valley — center-west
-    m_provinces.push_back(mkP(6,"Loire Valley","Tours",
-        {iIdFLoi,iLoiAuv,iLoiPoi},320,false,false));
-    m_provinces[6].cityPos={-1.5f,0,0.5f};
-    // 7: Burgundy — center-east
-    m_provinces.push_back(mkP(7,"Burgundy","Dijon",
-        {iIdFBur,iAlsBurN,iBurDau,iAuvPro,iLoiAuv},280,false,false,"hills"));
-    // 8: Poitou — west coast
-    m_provinces.push_back(mkP(8,"Poitou","Poitiers",
-        {iBrtPoi,iLoiPoi,iPoiAqu,cBordW,cRoch,cNant},180,true,false,"marsh"));
-    // 9: Aquitaine — southwest
-    m_provinces.push_back(mkP(9,"Aquitaine","Bordeaux",
-        {iPoiAqu,iAquLan,iAquGas,cBordS,cBordW},350,true,false));
-    m_provinces[9].cityPos={-3.8f,0,4.5f};
-    // 10: Languedoc — south-center
-    m_provinces.push_back(mkP(10,"Languedoc","Toulouse",
-        {iAquLan,iAuvLan,iLanPro,cMontp,cNarb,cPerp,cPyrE,cPyrM,cPyrW,iAquGas},280,true,false));
-    // 11: Provence — southeast coast
-    m_provinces.push_back(mkP(11,"Provence","Marseille",
-        {iLanPro,iAuvPro,iDauPro,cNice,cToulon,cMars,cMontp},300,true,false));
-    // 12: Dauphiné — east mountains
-    m_provinces.push_back(mkP(12,"Dauphine","Grenoble",
-        {iBurDau,iDauAlp,cGenev,cAlpS,cNice,iDauPro,iAuvPro},180,false,false,"mountains"));
-    // 13: Auvergne — center mountains
-    m_provinces.push_back(mkP(13,"Auvergne","Clermont",
-        {iLoiAuv,iAuvPro,iLanPro,iAuvLan,iAquLan,iPoiAqu,iLoiPoi},150,false,false,"mountains"));
-    // 14: Gascony — far south (Pyrenees)
-    m_provinces.push_back(mkP(14,"Gascony","Bayonne",
-        {iAquGas,cPyrW,cBayo,cBiarr,cBordS},120,true,false,"mountains"));
-
-    for (auto& p : m_provinces) {
-        float t = (float)(p.id % 7) * 0.015f;
-        p.color.r += t - 0.04f; p.color.g += t * 0.2f - 0.02f; p.color.b += t * 0.1f;
+    // France (player)
+    {
+        Faction f; f.id = "france"; f.name = "France"; f.leaderName = "Louis XV";
+        f.color = { 0.28f,0.38f,0.75f }; f.isPlayerControlled = true; f.treasury = 12000;
+        m_factions.push_back(f);
     }
 
-    auto adj=[&](int a,int b){m_provinces[a].neighborIds.push_back(b);m_provinces[b].neighborIds.push_back(a);};
-    adj(0,1);adj(0,3);adj(0,4);adj(0,6);adj(0,7);adj(0,13);
-    adj(1,2);adj(1,3);adj(1,6);adj(2,6);adj(2,8);adj(3,4);
-    adj(4,5);adj(4,7);adj(5,7);adj(5,12);adj(6,8);adj(6,13);
-    adj(7,12);adj(7,13);adj(8,9);adj(8,13);adj(9,10);adj(9,14);
-    adj(10,11);adj(10,13);adj(10,14);adj(11,12);adj(11,13);adj(12,13);
+    // Spain
+    {
+        Faction f; f.id = "spain"; f.name = "Spain"; f.leaderName = "Ferdinand VI";
+        f.color = { 0.85f,0.55f,0.15f }; f.isPlayerControlled = false; f.treasury = 8000;
+        f.relations.push_back({ "france",DiplomaticStatus::WAR,-80 });
+        m_factions.push_back(f);
+    }
+    GetFaction("france")->relations.push_back({ "spain",DiplomaticStatus::WAR,-80 });
 
-    // Terrain obstacles (repositioned to match new map)
-    #define V(x,z) glm::vec3(x,0.0f,z)
-    m_obstacles.push_back({"Alps","mountain",
-        {V(6.2f,2.0f),V(7.2f,2.5f),V(7.5f,3.8f),V(7.0f,4.8f),V(6.5f,4.5f),V(6.0f,3.0f)},
-        {},{0.62f, 0.58f, 0.52f} });
-    m_obstacles.push_back({"Pyrenees","mountain",
-        {V(-3.5f,7.5f),V(-1.5f,8.0f),V(0.5f,8.2f),V(1.2f,7.8f),V(0.8f,8.5f),V(-1.0f,8.8f),V(-3.2f,8.5f),V(-3.8f,8.0f)},
-        {},{0.58f, 0.54f, 0.48f}});
-    m_obstacles.push_back({"Massif Central","mountain",
+    // Great Britain
+    {
+        Faction f; f.id = "britain"; f.name = "Great Britain"; f.leaderName = "George II";
+        f.color = { 0.8f,0.2f,0.2f }; f.isPlayerControlled = false; f.treasury = 10000;
+        f.relations.push_back({ "france",DiplomaticStatus::WAR,-90 });
+        m_factions.push_back(f);
+    }
+    GetFaction("france")->relations.push_back({ "britain",DiplomaticStatus::WAR,-90 });
+
+    // Austria / HRE
+    {
+        Faction f; f.id = "austria"; f.name = "Austria"; f.leaderName = "Maria Theresa";
+        f.color = { 0.9f,0.85f,0.3f }; f.isPlayerControlled = false; f.treasury = 9000;
+        f.relations.push_back({ "france",DiplomaticStatus::WAR,-60 });
+        m_factions.push_back(f);
+    }
+    GetFaction("france")->relations.push_back({ "austria",DiplomaticStatus::WAR,-60 });
+
+    // United Provinces (Netherlands)
+    {
+        Faction f; f.id = "netherlands"; f.name = "United Provinces"; f.leaderName = "William IV";
+        f.color = { 0.85f,0.50f,0.15f }; f.isPlayerControlled = false; f.treasury = 7000;
+        f.relations.push_back({ "france",DiplomaticStatus::NEUTRAL,0 });
+        m_factions.push_back(f);
+    }
+    GetFaction("france")->relations.push_back({ "netherlands",DiplomaticStatus::NEUTRAL,0 });
+
+    // Sardinia-Piedmont
+    {
+        Faction f; f.id = "sardinia"; f.name = "Sardinia-Piedmont"; f.leaderName = "Charles Emmanuel III";
+        f.color = { 0.3f,0.6f,0.45f }; f.isPlayerControlled = false; f.treasury = 5000;
+        f.relations.push_back({ "france",DiplomaticStatus::NEUTRAL,10 });
+        m_factions.push_back(f);
+    }
+    GetFaction("france")->relations.push_back({ "sardinia",DiplomaticStatus::NEUTRAL,10 });
+
+    // Papal States
+    {
+        Faction f; f.id = "papal"; f.name = "Papal States"; f.leaderName = "Benedict XIV";
+        f.color = { 0.95f,0.90f,0.60f }; f.isPlayerControlled = false; f.treasury = 4000;
+        f.relations.push_back({ "france",DiplomaticStatus::NEUTRAL,20 });
+        m_factions.push_back(f);
+    }
+    GetFaction("france")->relations.push_back({ "papal",DiplomaticStatus::NEUTRAL,20 });
+
+    // Bavaria
+    {
+        Faction f; f.id = "bavaria"; f.name = "Bavaria"; f.leaderName = "Maximilian III";
+        f.color = { 0.35f,0.55f,0.8f }; f.isPlayerControlled = false; f.treasury = 4000;
+        f.relations.push_back({ "france",DiplomaticStatus::NEUTRAL,10 });
+        m_factions.push_back(f);
+    }
+    GetFaction("france")->relations.push_back({ "bavaria",DiplomaticStatus::NEUTRAL,10 });
+
+    // ═══════════════════════════════════════════════════════════
+    // COORDINATE SYSTEM
+    // X = west(-) / east(+),  Z = north(-) / south(+)
+    // France centered around (0,0), ~16 units wide
+    // ═══════════════════════════════════════════════════════════
+#define V(x,z) glm::vec3(x,0.0f,z)
+
+// ── FRANCE COASTLINE (clockwise from Dunkirk) ──
+    glm::vec3
+        cDunk = V(2.5, -5.5), cCalais = V(1.2, -5.8), cBoul = V(0.2, -5.3),
+        cDiep = V(-1.0, -4.8), cLeHav = V(-2.2, -4.5), cCherb = V(-3.8, -5.2),
+        cStMalo = V(-4.8, -3.8), cStBri = V(-6.5, -3.5), cBrest = V(-8.2, -2.5),
+        cQuimp = V(-7.8, -1.2), cLori = V(-6.8, -0.5),
+        cNant = V(-5.8, 0.5), cRoch = V(-5.5, 2.5), cBordW = V(-5.0, 4.0),
+        cBordS = V(-4.5, 5.5),
+        cBiarr = V(-4.2, 6.8), cBayo = V(-3.8, 7.3),
+        cPyrW = V(-3.0, 7.8), cPyrM = V(-1.0, 8.2), cPyrE = V(0.8, 8.0),
+        cPerp = V(1.5, 7.5),
+        cNarb = V(2.5, 7.2), cMontp = V(3.5, 6.8), cMars = V(4.8, 6.5),
+        cToulon = V(5.5, 6.0), cNice = V(6.8, 5.0),
+        cAlpS = V(7.0, 3.5), cGenev = V(6.5, 1.5), cJura = V(6.2, 0.5),
+        cBasel = V(6.5, -0.5), cStras = V(6.5, -2.0),
+        cMetz = V(5.5, -3.5), cLille = V(3.0, -4.5);
+
+    // ── FRANCE INTERNAL BORDERS ──
+    glm::vec3
+        iNrmBrt = V(-4.5, -2.5), iNrmIdF = V(-1.5, -2.5), iPicChm = V(2.0, -3.2),
+        iIdFLoi = V(-2.0, -0.5), iIdFBur = V(0.5, -0.5),
+        iChmAlsW = V(4.2, -2.0), iAlsBurN = V(4.8, -0.5),
+        iBrtPoi = V(-5.0, 1.0), iLoiPoi = V(-3.0, 1.5), iLoiAuv = V(-0.5, 1.5),
+        iBurDau = V(3.5, 1.0), iDauAlp = V(5.5, 1.5),
+        iPoiAqu = V(-3.5, 3.5), iAuvLan = V(1.0, 4.5), iAuvPro = V(3.0, 4.0),
+        iDauPro = V(5.0, 3.5),
+        iAquGas = V(-3.0, 5.5), iAquLan = V(-0.5, 6.0), iLanPro = V(3.5, 5.5);
+
+    // ── LOW COUNTRIES BORDER POINTS ──
+    glm::vec3
+        lcFlanW = V(0.2, -5.8),     // Flanders west (= cCalais area)
+        lcFlanN = V(0.5, -7.0),     // Flanders north coast
+        lcBruxN = V(3.0, -7.0),     // Brussels north
+        lcBruxE = V(4.5, -5.5),     // Brussels east
+        lcAntw = V(2.0, -6.5),      // Antwerp area
+        // Holland
+        lcAmstW = V(1.5, -8.0),     // Amsterdam west
+        lcAmstE = V(4.0, -8.0),     // Amsterdam east
+        lcHolN = V(2.5, -9.5),      // Holland north coast
+        lcHolNE = V(4.5, -9.0),     // Holland northeast
+        lcHolE = V(5.0, -7.5);      // Holland east
+
+    // ── GERMAN BORDER POINTS ──
+    glm::vec3
+        deRhinN = V(5.5, -7.0),     // Rhineland north
+        deRhinW = V(5.5, -5.0),     // Rhineland west (French border)
+        deRhinE = V(8.0, -5.0),     // Rhineland east
+        deWurtN = V(8.0, -3.0),     // Württemberg north
+        deWurtE = V(9.5, -1.5),     // Württemberg east
+        deWurtS = V(8.5, 0.0),      // Württemberg south
+        deBavN = V(10.0, -3.0),     // Bavaria north
+        deBavE = V(11.5, -1.5),     // Bavaria east
+        deBavS = V(10.5, 0.5),      // Bavaria south
+        deBavSE = V(11.0, 1.5),     // Bavaria southeast
+        deHanN = V(7.0, -8.0),      // Hanover area north
+        deHanE = V(9.0, -6.0);      // Hanover east
+
+    // ── SWISS BORDER POINTS ──
+    glm::vec3
+        chW = V(6.5, 0.5), chN = V(7.0, 0.5), chNE = V(8.2, 0.8),
+        chE = V(8.5, 1.5), chS = V(7.5, 2.0), chSW = V(6.5, 1.5);
+
+    // ── ITALY BORDER POINTS ──
+    glm::vec3
+        itPiedN = V(7.0, 2.5),      // Piedmont north (Alps)
+        itPiedW = V(6.8, 5.0),      // Piedmont west (= cNice)
+        itPiedE = V(8.5, 3.0),      // Piedmont east
+        itMilN = V(9.0, 2.5),       // Milan north
+        itMilE = V(10.5, 3.5),      // Milan east
+        itMilS = V(9.5, 4.5),       // Milan south
+        itGenoa = V(8.0, 5.5),      // Genoa coast
+        itVenW = V(10.5, 2.5),      // Venice west
+        itVenN = V(11.5, 2.0),      // Venice north
+        itVenE = V(12.5, 3.0),      // Venice east
+        itVenS = V(12.0, 4.5),      // Venice south coast
+        itTuscN = V(9.5, 5.0),      // Tuscany north
+        itTuscE = V(11.0, 5.5),     // Tuscany east
+        itTuscS = V(10.5, 7.0),     // Tuscany south
+        itTuscW = V(8.5, 6.5),      // Tuscany west coast
+        itPapN = V(11.0, 6.0),      // Papal north
+        itPapE = V(12.5, 7.0),      // Papal east
+        itPapS = V(12.0, 8.5),      // Papal south
+        itPapW = V(10.0, 7.5),      // Papal west coast
+        itNapN = V(12.0, 8.5),      // Naples north
+        itNapE = V(13.5, 9.5),      // Naples east
+        itNapS = V(13.0, 11.0),     // Naples south
+        itNapW = V(11.0, 10.0);     // Naples west coast
+
+    // ── SPAIN BORDER POINTS ──
+    glm::vec3
+        esGalN = V(-5.5, 8.0),      // Galicia north
+        esGalW = V(-6.5, 9.5),      // Galicia west coast
+        esGalS = V(-5.0, 10.5),     // Galicia south
+        esCastN = V(-3.0, 8.5),     // Castile north (Pyrenees)
+        esCastW = V(-5.0, 10.5),    // Castile west (= esGalS)
+        esCastE = V(1.0, 9.5),      // Castile east border
+        esCastS = V(-1.5, 12.0),    // Castile south
+        esCastSW = V(-4.5, 11.5),   // Castile southwest
+        esAragN = V(1.0, 8.5),      // Aragon north
+        esAragE = V(3.0, 9.5),      // Aragon east coast
+        esAragS = V(2.0, 11.5),     // Aragon south
+        esValE = V(4.0, 10.5);      // Valencia east coast
+
+    // ═══════════════════════════════════════════════════════════
+    // PROVINCE BUILDER
+    // ═══════════════════════════════════════════════════════════
+    auto mkP = [&](int id, const std::string& nm, const std::string& cn, const std::string& owner,
+        std::vector<glm::vec3>bv, int inc, bool co, bool cap, const std::string& ter = "plains") {
+            Province p; p.id = id; p.name = nm; p.ownerFactionId = owner;
+            p.borderVertices = bv; p.center = Centroid(bv); p.cityName = cn; p.cityPos = p.center;
+            p.baseIncome = inc; p.isCoastal = co; p.isCapital = cap; p.terrain = ter;
+            p.population = inc * 80 + 5000;
+            // Natural terrain colors (shader mixes with procedural grass)
+            glm::vec3 bc = { 0.32f,0.48f,0.22f }; // default green
+            if (ter == "forest")  bc = { 0.20f,0.38f,0.15f };
+            if (ter == "hills")   bc = { 0.40f,0.42f,0.25f };
+            if (ter == "mountains")bc = { 0.45f,0.40f,0.30f };
+            if (ter == "marsh")   bc = { 0.28f,0.40f,0.25f };
+            if (ter == "arid")    bc = { 0.55f,0.48f,0.30f }; // Spain/south
+            p.color = bc; return p;
+        };
+
+    // ═══════════════════════════════════════════════════════════
+    // FRENCH PROVINCES (0-14) — same as before
+    // ═══════════════════════════════════════════════════════════
+    m_provinces.push_back(mkP(0, "Ile-de-France", "Paris", "france",
+        { iNrmIdF,iPicChm,iIdFBur,iLoiAuv,iIdFLoi }, 500, false, true));
+    m_provinces.push_back(mkP(1, "Normandy", "Rouen", "france",
+        { cCherb,cLeHav,cDiep,iNrmIdF,iIdFLoi,iNrmBrt,cStMalo }, 300, true, false));
+    m_provinces.push_back(mkP(2, "Brittany", "Rennes", "france",
+        { cStMalo,iNrmBrt,iIdFLoi,iBrtPoi,cNant,cLori,cQuimp,cBrest,cStBri }, 200, true, false, "hills"));
+    m_provinces.push_back(mkP(3, "Picardy", "Amiens", "france",
+        { cDiep,cBoul,cCalais,cDunk,cLille,iPicChm,iNrmIdF }, 280, true, false));
+    m_provinces.push_back(mkP(4, "Champagne", "Reims", "france",
+        { iPicChm,cLille,cMetz,iChmAlsW,iAlsBurN,iIdFBur }, 250, false, false));
+    m_provinces.push_back(mkP(5, "Alsace-Lorraine", "Strasbourg", "france",
+        { iChmAlsW,cMetz,cStras,cBasel,cJura,iDauAlp,iBurDau,iAlsBurN }, 220, false, false, "hills"));
+    m_provinces.push_back(mkP(6, "Loire Valley", "Tours", "france",
+        { iIdFLoi,iLoiAuv,iLoiPoi }, 320, false, false));
+    m_provinces[6].cityPos = { -1.5f,0,0.5f };
+    m_provinces.push_back(mkP(7, "Burgundy", "Dijon", "france",
+        { iIdFBur,iAlsBurN,iBurDau,iAuvPro,iLoiAuv }, 280, false, false, "hills"));
+    m_provinces.push_back(mkP(8, "Poitou", "Poitiers", "france",
+        { iBrtPoi,iLoiPoi,iPoiAqu,cBordW,cRoch,cNant }, 180, true, false, "marsh"));
+    m_provinces.push_back(mkP(9, "Aquitaine", "Bordeaux", "france",
+        { iPoiAqu,iAquLan,iAquGas,cBordS,cBordW }, 350, true, false));
+    m_provinces[9].cityPos = { -3.8f,0,4.5f };
+    m_provinces.push_back(mkP(10, "Languedoc", "Toulouse", "france",
+        { iAquLan,iAuvLan,iLanPro,cMontp,cNarb,cPerp,cPyrE,cPyrM,cPyrW,iAquGas }, 280, true, false));
+    m_provinces.push_back(mkP(11, "Provence", "Marseille", "france",
+        { iLanPro,iAuvPro,iDauPro,cNice,cToulon,cMars,cMontp }, 300, true, false));
+    m_provinces.push_back(mkP(12, "Dauphine", "Grenoble", "france",
+        { iBurDau,iDauAlp,cGenev,cAlpS,cNice,iDauPro,iAuvPro }, 180, false, false, "mountains"));
+    m_provinces.push_back(mkP(13, "Auvergne", "Clermont", "france",
+        { iLoiAuv,iAuvPro,iLanPro,iAuvLan,iAquLan,iPoiAqu,iLoiPoi }, 150, false, false, "mountains"));
+    m_provinces.push_back(mkP(14, "Gascony", "Bayonne", "france",
+        { iAquGas,cPyrW,cBayo,cBiarr,cBordS }, 120, true, false, "mountains"));
+
+    // Per-province terrain tint
+    for (int i = 0; i <= 14; i++) {
+        float t = (float)(m_provinces[i].id % 7) * 0.015f;
+        m_provinces[i].color.r += t - 0.04f;
+        m_provinces[i].color.g += t * 0.2f - 0.02f;
+        m_provinces[i].color.b += t * 0.1f;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // LOW COUNTRIES (15-16)
+    // ═══════════════════════════════════════════════════════════
+
+    // 15: Flanders (Austrian Netherlands) — borders Picardy
+    m_provinces.push_back(mkP(15, "Flanders", "Brussels", "austria",
+        { lcFlanW,lcFlanN,lcAmstW,lcBruxN,lcHolE,lcBruxE,deRhinW,cMetz,cLille,cDunk,cCalais },
+        250, true, false));
+    m_provinces[15].cityPos = { 2.5f,0,-6.0f };
+
+    // 16: Holland (United Provinces)
+    m_provinces.push_back(mkP(16, "Holland", "Amsterdam", "netherlands",
+        { lcAmstW,lcHolN,lcHolNE,lcHolE,lcBruxN },
+        300, true, true));
+    m_provinces[16].cityPos = { 3.0f,0,-8.5f };
+
+    // ═══════════════════════════════════════════════════════════
+    // GERMAN STATES (17-19)
+    // ═══════════════════════════════════════════════════════════
+
+    // 17: Rhineland — borders Flanders, Alsace, Württemberg
+    m_provinces.push_back(mkP(17, "Rhineland", "Cologne", "austria",
+        { deRhinW,deRhinN,deHanE,deRhinE,deWurtN,cStras,cMetz },
+        220, false, false, "hills"));
+    m_provinces[17].cityPos = { 7.0f,0,-4.0f };
+
+    // 18: Württemberg — borders Rhineland, Switzerland, Bavaria
+    m_provinces.push_back(mkP(18, "Wurttemberg", "Stuttgart", "austria",
+        { deWurtN,deRhinE,deBavN,deWurtE,deBavS,deWurtS,chN,chW,cBasel,cStras },
+        200, false, false, "hills"));
+    m_provinces[18].cityPos = { 8.5f,0,-1.5f };
+
+    // 19: Bavaria — east of Württemberg
+    m_provinces.push_back(mkP(19, "Bavaria", "Munich", "bavaria",
+        { deBavN,deBavE,deBavSE,deBavS,deWurtE },
+        250, false, true, "forest"));
+    m_provinces[19].cityPos = { 10.5f,0,-1.0f };
+
+    // ═══════════════════════════════════════════════════════════
+    // SWITZERLAND (20)
+    // ═══════════════════════════════════════════════════════════
+
+    // 20: Switzerland — neutral, mountainous
+    m_provinces.push_back(mkP(20, "Switzerland", "Bern", "bavaria",
+        { chW,chN,chNE,chE,chS,chSW },
+        100, false, false, "mountains"));
+
+    // ═══════════════════════════════════════════════════════════
+    // ITALIAN STATES (21-25)
+    // ═══════════════════════════════════════════════════════════
+
+    // 21: Piedmont-Savoy — northwest Italy
+    m_provinces.push_back(mkP(21, "Piedmont", "Turin", "sardinia",
+        { cAlpS,itPiedN,itPiedE,itGenoa,itPiedW },
+        200, true, true, "hills"));
+    m_provinces[21].cityPos = { 7.5f,0,4.0f };
+
+    // 22: Milan (Lombardy) — Austrian possession
+    m_provinces.push_back(mkP(22, "Milan", "Milan", "austria",
+        { itPiedN,itMilN,itMilE,itMilS,itGenoa,itPiedE },
+        350, false, false));
+    m_provinces[22].cityPos = { 9.2f,0,3.5f };
+
+    // 23: Venice — northeast Italy
+    m_provinces.push_back(mkP(23, "Venetia", "Venice", "austria",
+        { itMilE,itVenW,itVenN,itVenE,itVenS,itTuscN,itMilS },
+        280, true, false));
+    m_provinces[23].cityPos = { 11.5f,0,3.0f };
+
+    // 24: Tuscany — central Italy
+    m_provinces.push_back(mkP(24, "Tuscany", "Florence", "papal",
+        { itGenoa,itMilS,itTuscN,itTuscE,itTuscS,itTuscW },
+        250, true, false, "hills"));
+    m_provinces[24].cityPos = { 9.8f,0,5.8f };
+
+    // 25: Papal States — central Italy
+    m_provinces.push_back(mkP(25, "Papal States", "Rome", "papal",
+        { itTuscS,itTuscE,itPapN,itPapE,itPapS,itPapW },
+        220, true, true));
+    m_provinces[25].cityPos = { 11.5f,0,7.0f };
+
+    // ═══════════════════════════════════════════════════════════
+    // SPANISH PROVINCES (26-28)
+    // ═══════════════════════════════════════════════════════════
+
+    // 26: Galicia — northwest Spain
+    m_provinces.push_back(mkP(26, "Galicia", "Santiago", "spain",
+        { cBayo,esGalN,esGalW,esGalS,esCastN,cPyrW },
+        120, true, false, "hills"));
+    m_provinces[26].cityPos = { -5.0f,0,9.0f };
+
+    // 27: Castile — central Spain (large)
+    m_provinces.push_back(mkP(27, "Castile", "Madrid", "spain",
+        { esCastN,esGalS,esCastSW,esCastS,esAragS,esCastE,esAragN,cPyrM,cPyrW },
+        400, false, true, "arid"));
+    m_provinces[27].cityPos = { -1.5f,0,10.0f };
+
+    // 28: Aragon-Catalonia — northeast Spain
+    m_provinces.push_back(mkP(28, "Aragon", "Barcelona", "spain",
+        { esAragN,esCastE,esAragS,esValE,esAragE,cPerp,cPyrE,cPyrM },
+        250, true, false, "hills"));
+    m_provinces[28].cityPos = { 2.0f,0,9.5f };
+
+    // ═══════════════════════════════════════════════════════════
+    // FRENCH PROVINCE ADJACENCIES
+    // ═══════════════════════════════════════════════════════════
+    auto adj = [&](int a, int b) {
+        m_provinces[a].neighborIds.push_back(b);
+        m_provinces[b].neighborIds.push_back(a);
+        };
+
+    // Internal France
+    adj(0, 1); adj(0, 3); adj(0, 4); adj(0, 6); adj(0, 7); adj(0, 13);
+    adj(1, 2); adj(1, 3); adj(1, 6); adj(2, 6); adj(2, 8); adj(3, 4);
+    adj(4, 5); adj(4, 7); adj(5, 7); adj(5, 12); adj(6, 8); adj(6, 13);
+    adj(7, 12); adj(7, 13); adj(8, 9); adj(8, 13); adj(9, 10); adj(9, 14);
+    adj(10, 11); adj(10, 13); adj(10, 14); adj(11, 12); adj(11, 13); adj(12, 13);
+
+    // France ↔ Low Countries
+    adj(3, 15);   // Picardy — Flanders
+    adj(4, 15);   // Champagne — Flanders (via Metz-Lille corridor)
+
+    // France ↔ Germany
+    adj(5, 17);   // Alsace — Rhineland
+    adj(5, 18);   // Alsace — Württemberg (via Basel/Strasbourg)
+
+    // France ↔ Switzerland
+    adj(12, 20);  // Dauphiné — Switzerland (via Geneva)
+
+    // France ↔ Italy
+    adj(11, 21);  // Provence — Piedmont (via Nice)
+    adj(12, 21);  // Dauphiné — Piedmont (via Alps)
+
+    // France ↔ Spain (through Pyrenees passes)
+    adj(14, 26);  // Gascony — Galicia (western pass)
+    adj(10, 28);  // Languedoc — Aragon (eastern pass via Perpignan)
+
+    // Low Countries internal
+    adj(15, 16);  // Flanders — Holland
+
+    // Low Countries ↔ Germany
+    adj(15, 17);  // Flanders — Rhineland
+    adj(16, 17);  // Holland — Rhineland
+
+    // German internal
+    adj(17, 18);  // Rhineland — Württemberg
+    adj(18, 19);  // Württemberg — Bavaria
+
+    // Germany ↔ Switzerland
+    adj(18, 20);  // Württemberg — Switzerland
+
+    // Switzerland ↔ Italy
+    adj(20, 22);  // Switzerland — Milan (via Alps pass)
+
+    // Italy internal
+    adj(21, 22);  // Piedmont — Milan
+    adj(21, 24);  // Piedmont — Tuscany (via Genoa coast)
+    adj(22, 23);  // Milan — Venice
+    adj(22, 24);  // Milan — Tuscany
+    adj(23, 24);  // Venice — Tuscany
+    adj(24, 25);  // Tuscany — Papal States
+
+    // Spain internal
+    adj(26, 27);  // Galicia — Castile
+    adj(27, 28);  // Castile — Aragon
+
+    // ═══════════════════════════════════════════════════════════
+    // TERRAIN OBSTACLES
+    // ═══════════════════════════════════════════════════════════
+
+    m_obstacles.push_back({ "Alps","mountain",
+        {V(6.2f,2.0f),V(7.2f,2.5f),V(8.8f,2.2f),V(9.5f,2.5f),V(10.0f,2.2f),
+         V(9.0f,1.8f),V(8.5f,1.5f),V(7.5f,2.0f),V(6.8f,1.8f),V(6.0f,1.5f)},
+        {},{0.62f,0.58f,0.52f} });
+    m_obstacles.push_back({ "Pyrenees","mountain",
+        {V(-3.5f,7.5f),V(-1.5f,8.0f),V(0.5f,8.2f),V(1.2f,7.8f),
+         V(0.8f,8.5f),V(-1.0f,8.8f),V(-3.2f,8.5f),V(-3.8f,8.0f)},
+        {},{0.58f,0.54f,0.48f} });
+    m_obstacles.push_back({ "Massif Central","mountain",
         {V(-0.2f,3.0f),V(1.2f,2.8f),V(1.8f,3.5f),V(1.5f,4.8f),V(0.5f,5.0f),V(-0.5f,4.2f)},
-        {},{0.55f, 0.52f, 0.42f} });
-    m_obstacles.push_back({"Jura","mountain",
+        {},{0.55f,0.52f,0.42f} });
+    m_obstacles.push_back({ "Jura","mountain",
         {V(5.8f,0.0f),V(6.4f,0.2f),V(6.6f,1.0f),V(6.2f,1.3f),V(5.6f,0.8f)},
-        {},{0.60f, 0.56f, 0.50f} });
-    m_obstacles.push_back({"Lac Leman","lake",
+        {},{0.60f,0.56f,0.50f} });
+    m_obstacles.push_back({ "Lac Leman","lake",
         {V(6.0f,1.2f),V(6.6f,1.0f),V(6.8f,1.5f),V(6.4f,1.8f),V(5.8f,1.5f)},
-        {},{0.12f, 0.28f, 0.50f} });
-    for(auto&ob:m_obstacles)ob.center=Centroid(ob.vertices);
-    #undef V
+        {},{0.12f,0.28f,0.50f} });
+    m_obstacles.push_back({ "Apennines","mountain",
+        {V(9.0f,5.0f),V(9.8f,5.5f),V(10.5f,6.5f),V(11.0f,7.5f),V(12.0f,8.0f),
+         V(11.5f,8.5f),V(10.5f,7.0f),V(9.5f,6.0f),V(8.5f,5.2f)},
+        {},{0.55f,0.50f,0.42f} });
+    for (auto& ob : m_obstacles)ob.center = Centroid(ob.vertices);
 
     // ═══════════════════════════════════════════════════════════
-    // FOREIGN TERRITORIES — Surrounding countries (18th century)
+    // FOREIGN TERRITORIES (only truly off-map nations now)
     // ═══════════════════════════════════════════════════════════
-    #define V(x,z) glm::vec3(x,0.0f,z)
-    // Austrian Netherlands (Belgium) — north of France
-    m_foreignTerritories.push_back({"Austrian Netherlands",
-        {V(0.2f,-5.8f),V(2.5f,-5.5f),V(3.0f,-4.5f),V(4.5f,-4.5f),V(5.5f,-5.0f),
-         V(5.5f,-7.0f),V(3.0f,-7.5f),V(0.5f,-7.5f),V(-0.5f,-7.0f),V(-0.5f,-6.0f)},
-        {},{0.50f, 0.46f, 0.35f} }); // brown/tan
+    m_foreignTerritories.clear();
 
-    // United Provinces (Dutch Republic) — far north
-    m_foreignTerritories.push_back({"United Provinces",
-        {V(2.5f,-7.5f),V(5.0f,-7.5f),V(5.5f,-7.0f),V(5.5f,-9.0f),V(3.5f,-9.5f),
-         V(1.5f,-9.0f),V(1.5f,-8.0f)},
-        {},{0.45f, 0.50f, 0.35f} }); // orange
-
-    // Holy Roman Empire (German states) — east
-    m_foreignTerritories.push_back({"Holy Roman Empire",
-        {V(5.5f,-5.0f),V(6.5f,-2.0f),V(6.5f,-0.5f),V(6.2f,0.5f),V(7.0f,0.5f),
-         V(8.5f,0.0f),V(9.5f,-1.5f),V(9.5f,-4.0f),V(8.0f,-6.0f),V(5.5f,-7.0f)},
-        {},{0.52f, 0.48f, 0.32f} }); // yellow
-
-    // Swiss Confederation — small, east
-    m_foreignTerritories.push_back({"Swiss Confederation",
-        {V(6.5f,0.5f),V(7.0f,0.5f),V(8.2f,0.8f),V(8.5f,1.5f),V(7.5f,2.0f),
-         V(6.5f,1.5f)},
-        {},{0.55f, 0.52f, 0.45f} }); // red
-
-    // Kingdom of Sardinia (Savoy-Piedmont) — southeast
-    m_foreignTerritories.push_back({"Kingdom of Sardinia",
-        {V(6.8f,2.0f),V(7.5f,2.0f),V(8.5f,2.5f),V(9.0f,4.0f),V(8.5f,5.5f),
-         V(7.5f,5.5f),V(6.8f,5.0f),V(7.0f,3.5f)},
-        {},{0.42f, 0.48f, 0.35f} }); // teal
-
-    // Kingdom of Spain — south of Pyrenees
-    m_foreignTerritories.push_back({"Kingdom of Spain",
-        {V(-4.2f,7.3f),V(-3.0f,7.8f),V(-1.0f,8.2f),V(0.8f,8.0f),V(1.5f,7.5f),
-         V(2.5f,8.0f),V(3.0f,9.5f),V(1.0f,11.0f),V(-2.0f,11.5f),V(-4.5f,11.0f),
-         V(-6.0f,9.5f),V(-5.5f,8.0f),V(-4.5f,7.5f)},
-        {},{0.58f, 0.50f, 0.32f} }); // warm brown/orange
-
-    // England (small strip across Channel)
-    m_foreignTerritories.push_back({"Kingdom of England",
+    // England (across Channel — not a province, just rendered)
+    m_foreignTerritories.push_back({ "Kingdom of England",
         {V(-5.0f,-7.5f),V(-2.0f,-8.0f),V(0.5f,-7.5f),V(1.5f,-8.0f),
          V(2.0f,-9.5f),V(-1.0f,-10.0f),V(-4.0f,-9.5f),V(-6.0f,-8.5f)},
-        {},{0.40f, 0.48f, 0.32f} }); // red
+        {},{0.40f,0.48f,0.32f} });
 
-    for(auto&ft:m_foreignTerritories)ft.center=Centroid(ft.vertices);
-    #undef V
+    // Hanover / North Germany (off-map, just rendered)
+    m_foreignTerritories.push_back({ "Hanover",
+        {V(5.5f,-7.0f),V(7.0f,-8.0f),V(9.0f,-8.5f),V(10.0f,-7.0f),
+         V(9.0f,-6.0f),V(8.0f,-5.0f),V(7.0f,-5.5f)},
+        {},{0.48f,0.52f,0.38f} });
 
-    // Buildings
-    m_provinces[0].buildings.push_back({"Royal Palace","government",3,200,0});
-    m_provinces[0].buildings.push_back({"Paris Barracks","barracks",2,0,3});
-    m_provinces[11].buildings.push_back({"Toulon Naval Base","port",3,100,2});
-    m_provinces[5].buildings.push_back({"Strasbourg Fortress","fort",2,0,2});
+    // Austria proper (far east, off-map)
+    m_foreignTerritories.push_back({ "Austria",
+        {V(11.5f,-1.5f),V(13.0f,-2.0f),V(14.0f,0.0f),V(13.5f,2.0f),
+         V(12.5f,3.0f),V(11.5f,2.0f),V(10.5f,0.5f),V(11.0f,-0.5f)},
+        {},{0.52f,0.48f,0.32f} });
 
-    Faction*fr=GetFaction("france");
-    for(auto&p:m_provinces){fr->ownedProvinces.push_back(p.id);if(p.isCapital)fr->capitalProvinceId=p.id;}
+    // Southern Spain (off-map, Andalusia)
+    m_foreignTerritories.push_back({ "Andalusia",
+        {V(-4.5f,11.5f),V(-1.5f,12.0f),V(2.0f,11.5f),V(4.0f,10.5f),
+         V(3.0f,13.0f),V(0.0f,14.0f),V(-3.0f,13.5f),V(-5.5f,12.5f)},
+        {},{0.55f,0.48f,0.30f} });
 
-    // Build nav grid AFTER provinces and obstacles are set up
+    // Naples / Southern Italy
+    m_foreignTerritories.push_back({ "Kingdom of Naples",
+        {V(12.0f,8.5f),V(12.5f,7.0f),V(13.5f,7.5f),V(14.0f,9.0f),
+         V(13.5f,11.0f),V(12.0f,11.5f),V(11.0f,10.0f)},
+        {},{0.52f,0.45f,0.30f} });
+
+    for (auto& ft : m_foreignTerritories)ft.center = Centroid(ft.vertices);
+#undef V
+
+    // ═══════════════════════════════════════════════════════════
+    // BUILDINGS
+    // ═══════════════════════════════════════════════════════════
+    m_provinces[0].buildings.push_back({ "Royal Palace","government",3,200,0 });
+    m_provinces[0].buildings.push_back({ "Paris Barracks","barracks",2,0,3 });
+    m_provinces[11].buildings.push_back({ "Toulon Naval Base","port",3,100,2 });
+    m_provinces[5].buildings.push_back({ "Strasbourg Fortress","fort",2,0,2 });
+
+    // ═══════════════════════════════════════════════════════════
+    // FACTION OWNERSHIP
+    // ═══════════════════════════════════════════════════════════
+    Faction* fr = GetFaction("france");
+    for (int i = 0; i <= 14; i++) { fr->ownedProvinces.push_back(i); if (m_provinces[i].isCapital)fr->capitalProvinceId = i; }
+
+    auto assignProv = [&](const std::string& fid, int pid) {
+        Faction* f = GetFaction(fid); if (f) {
+            f->ownedProvinces.push_back(pid);
+            if (m_provinces[pid].isCapital)f->capitalProvinceId = pid;
+        }};
+
+    assignProv("austria", 15);   // Flanders
+    assignProv("netherlands", 16); // Holland
+    assignProv("austria", 17);   // Rhineland
+    assignProv("austria", 18);   // Württemberg
+    assignProv("bavaria", 19);   // Bavaria
+    assignProv("bavaria", 20);   // Switzerland (Bavarian sphere)
+    assignProv("sardinia", 21);  // Piedmont
+    assignProv("austria", 22);   // Milan
+    assignProv("austria", 23);   // Venice
+    assignProv("papal", 24);     // Tuscany
+    assignProv("papal", 25);     // Papal States
+    assignProv("spain", 26);     // Galicia
+    assignProv("spain", 27);     // Castile
+    assignProv("spain", 28);     // Aragon
+
+    // ═══════════════════════════════════════════════════════════
+    // BUILD NAV GRID
+    // ═══════════════════════════════════════════════════════════
     BuildNavGrid();
 
-    // Armies
-    auto mkA=[&](const std::string&gen,glm::vec3 pos,int li,int gr,int cv,int ar){
-        Army a;a.id=m_nextArmyId++;a.factionId="france";a.generalName=gen;
-        a.worldPosition=pos;
-        Province*p=GetProvinceAtWorldPos(pos);a.currentProvinceId=p?p->id:0;
-        auto add=[&](UnitType t,const std::string&un,int mp,int at,int df,int mo,int up){
-            Unit u;u.id=m_nextUnitId++;u.type=t;u.name=un;
-            u.stats={mp,mp,at,df,mo,5,0,up,0.0f};a.units.push_back(u);
-        };
-        for(int i=0;i<li;i++)add(UnitType::LINE_INFANTRY,"Ligne #"+std::to_string(i+1),120,12,10,60,50);
-        for(int i=0;i<gr;i++)add(UnitType::GRENADIERS,"Grenadiers #"+std::to_string(i+1),80,16,14,75,80);
-        for(int i=0;i<cv;i++)add(UnitType::DRAGOONS,"Dragons #"+std::to_string(i+1),60,14,8,65,70);
-        for(int i=0;i<ar;i++)add(UnitType::CANNON_12PDR,"Artillerie #"+std::to_string(i+1),30,22,4,55,70);
-        int aid=a.id;m_armies.push_back(std::move(a));fr->armyIds.push_back(aid);
-    };
-
-    mkA("Duc de Richelieu",{-0.5f,0,-1.5f},4,2,2,1);   // near Paris
-    mkA("Comte de Saxe",{-1.5f,0,-3.5f},3,1,1,1);      // Normandy
-    mkA("Chevalier de Belle-Isle",{5.0f,0,-1.0f},2,1,1,0); // Alsace
-    mkA("Duc de Villars",{4.5f,0,5.5f},2,0,1,0);         // Provence
-
     // ═══════════════════════════════════════════════════════════
-    // ENEMY FACTIONS — Surrounding powers at war with France
+    // ARMIES — French
     // ═══════════════════════════════════════════════════════════
-
-    // Spain — south, across the Pyrenees
-    {Faction f;f.id="spain";f.name="Spain";f.leaderName="Ferdinand VI";
-     f.color={0.85f,0.55f,0.15f};f.isPlayerControlled=false;f.treasury=8000;
-     f.relations.push_back({"france",DiplomaticStatus::WAR,  -80});
-     m_factions.push_back(f);}
-    // Add war from France side too
-    GetFaction("france")->relations.push_back({"spain",DiplomaticStatus::WAR,-80});
-
-    // Great Britain — north, across the Channel
-    {Faction f;f.id="britain";f.name="Great Britain";f.leaderName="George II";
-     f.color={0.8f,0.2f,0.2f};f.isPlayerControlled=false;f.treasury=10000;
-     f.relations.push_back({"france",DiplomaticStatus::WAR,-90});
-     m_factions.push_back(f);}
-    GetFaction("france")->relations.push_back({"britain",DiplomaticStatus::WAR,-90});
-
-    // Holy Roman Empire — east
-    {Faction f;f.id="hre";f.name="Holy Roman Empire";f.leaderName="Charles VII";
-     f.color={0.9f,0.85f,0.3f};f.isPlayerControlled=false;f.treasury=7000;
-     f.relations.push_back({"france",DiplomaticStatus::WAR,-60});
-     m_factions.push_back(f);}
-    GetFaction("france")->relations.push_back({"hre",DiplomaticStatus::WAR,-60});
-
-    // Enemy army creator (armies positioned OUTSIDE French borders, threatening)
-    auto mkEnemy=[&](const std::string& faction, const std::string& gen,
-                     glm::vec3 pos, int li, int gr, int cv, int ar){
-        Army a;a.id=m_nextArmyId++;a.factionId=faction;a.generalName=gen;
-        a.worldPosition=pos;a.currentProvinceId=-1; // outside French provinces
-        auto add=[&](UnitType t,const std::string&un,int mp,int at,int df,int mo,int up){
-            Unit u;u.id=m_nextUnitId++;u.type=t;u.name=un;
-            u.stats={mp,mp,at,df,mo,5,0,up,0.0f};a.units.push_back(u);
+    auto mkArmy = [&](const std::string& faction, const std::string& gen, glm::vec3 pos,
+        int li, int gr, int cv, int ar, bool isPlayer) {
+            Army a; a.id = m_nextArmyId++; a.factionId = faction; a.generalName = gen;
+            a.worldPosition = pos;
+            Province* p = GetProvinceAtWorldPos(pos); a.currentProvinceId = p ? p->id : -1;
+            auto add = [&](UnitType t, const std::string& un, int mp, int at, int df, int mo, int up) {
+                Unit u; u.id = m_nextUnitId++; u.type = t; u.name = un;
+                u.stats = { mp,mp,at,df,mo,5,0,up,0.0f }; a.units.push_back(u);
+                };
+            if (isPlayer) {
+                for (int i = 0; i < li; i++)add(UnitType::LINE_INFANTRY, "Ligne #" + std::to_string(i + 1), 120, 12, 10, 60, 50);
+                for (int i = 0; i < gr; i++)add(UnitType::GRENADIERS, "Grenadiers #" + std::to_string(i + 1), 80, 16, 14, 75, 80);
+                for (int i = 0; i < cv; i++)add(UnitType::DRAGOONS, "Dragons #" + std::to_string(i + 1), 60, 14, 8, 65, 70);
+                for (int i = 0; i < ar; i++)add(UnitType::CANNON_12PDR, "Artillerie #" + std::to_string(i + 1), 30, 22, 4, 55, 70);
+            }
+            else {
+                for (int i = 0; i < li; i++)add(UnitType::LINE_INFANTRY, "Infantry #" + std::to_string(i + 1), 120, 11, 9, 55, 50);
+                for (int i = 0; i < gr; i++)add(UnitType::GRENADIERS, "Grenadiers #" + std::to_string(i + 1), 80, 15, 13, 70, 80);
+                for (int i = 0; i < cv; i++)add(UnitType::HUSSARS, "Hussars #" + std::to_string(i + 1), 60, 13, 7, 60, 65);
+                for (int i = 0; i < ar; i++)add(UnitType::CANNON_6PDR, "Artillery #" + std::to_string(i + 1), 30, 18, 4, 50, 55);
+            }
+            int aid = a.id; m_armies.push_back(std::move(a));
+            GetFaction(faction)->armyIds.push_back(aid);
         };
-        for(int i=0;i<li;i++)add(UnitType::LINE_INFANTRY,"Infantry #"+std::to_string(i+1),120,11,9,55,50);
-        for(int i=0;i<gr;i++)add(UnitType::GRENADIERS,"Grenadiers #"+std::to_string(i+1),80,15,13,70,80);
-        for(int i=0;i<cv;i++)add(UnitType::HUSSARS,"Hussars #"+std::to_string(i+1),60,13,7,60,65);
-        for(int i=0;i<ar;i++)add(UnitType::CANNON_6PDR,"Artillery #"+std::to_string(i+1),30,18,4,50,55);
-        int aid=a.id;m_armies.push_back(std::move(a));
-        GetFaction(faction)->armyIds.push_back(aid);
-    };
 
-    // British armies — north of the Channel
-    mkEnemy("britain","Duke of Cumberland",{0.5f,0,-6.5f},4,1,1,1);
-    mkEnemy("britain","Lord Ligonier",{2.5f,0,-6.5f},3,1,1,0);
+    // French armies
+    mkArmy("france", "Duc de Richelieu", { -0.5f,0,-1.5f }, 4, 2, 2, 1, true);
+    mkArmy("france", "Comte de Saxe", { -1.5f,0,-3.5f }, 3, 1, 1, 1, true);
+    mkArmy("france", "Chevalier de Belle-Isle", { 5.0f,0,-1.0f }, 2, 1, 1, 0, true);
+    mkArmy("france", "Duc de Villars", { 4.5f,0,5.5f }, 2, 0, 1, 0, true);
 
-    // Spanish armies — south of the Pyrenees
-    mkEnemy("spain","Duke of Montemar",{-2.0f,0,9.5f},3,1,1,1);
-    mkEnemy("spain","Marquis de la Mina",{0.5f,0,9.5f},2,1,0,1);
+    // British armies (in England foreign territory)
+    mkArmy("britain", "Duke of Cumberland", { 0.5f,0,-8.5f }, 4, 1, 1, 1, false);
+    mkArmy("britain", "Lord Ligonier", { -2.0f,0,-8.5f }, 3, 1, 1, 0, false);
 
-    // HRE armies — east of the Rhine
-    mkEnemy("hre","Prince Charles",{7.8f,0,-1.0f},3,2,1,1);
-    mkEnemy("hre","Count Browne",{7.8f,0,2.5f},2,1,1,0);
+    // Spanish armies (in Spain)
+    mkArmy("spain", "Duke of Montemar", { -1.5f,0,10.0f }, 3, 1, 1, 1, false);
+    mkArmy("spain", "Marquis de la Mina", { 2.0f,0,9.5f }, 2, 1, 0, 1, false);
+
+    // Austrian armies (in Rhineland & Milan)
+    mkArmy("austria", "Prince Charles", { 7.0f,0,-4.0f }, 3, 2, 1, 1, false);
+    mkArmy("austria", "Count Browne", { 9.2f,0,3.5f }, 2, 1, 1, 0, false);
+
+    // Sardinian army
+    mkArmy("sardinia", "Duke of Savoy", { 7.5f,0,4.0f }, 2, 1, 1, 0, false);
 
     Logger::Info("Campaign: %d provinces, %d factions, %d armies, %d obstacles",
-        (int)m_provinces.size(),(int)m_factions.size(),(int)m_armies.size(),(int)m_obstacles.size());
+        (int)m_provinces.size(), (int)m_factions.size(), (int)m_armies.size(), (int)m_obstacles.size());
 }
-
 // ═══════════════════════════════════════════════════════════════
 // INPUT
 // ═══════════════════════════════════════════════════════════════

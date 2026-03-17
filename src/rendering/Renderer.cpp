@@ -74,7 +74,7 @@ void Renderer::BuildProvinceGPU(const Province&prov){
 
 void Renderer::BuildObstacleGPU(const TerrainObstacle&ob){
     if(ob.vertices.size()<3)return;ObstacleGPU gpu;std::vector<float>v;
-    glm::vec3 c=ob.center;int n=(int)ob.vertices.size();float y=0.01f;
+    glm::vec3 c=ob.center;int n=(int)ob.vertices.size();float y=0.05f;
     for(int i=0;i<n;i++){auto&v0=ob.vertices[i];auto&v1=ob.vertices[(i+1)%n];
         v.insert(v.end(),{c.x,y,c.z,v0.x,y,v0.z,v1.x,y,v1.z});}
     gpu.vertexCount=n*3;
@@ -84,16 +84,21 @@ void Renderer::BuildObstacleGPU(const TerrainObstacle&ob){
     glBindVertexArray(0);m_obstacleGPUs.push_back(gpu);
 }
 
-void Renderer::BuildForeignGPU(const ForeignTerritory&ft){
-    if(ft.vertices.size()<3)return;ObstacleGPU gpu;std::vector<float>v;
-    glm::vec3 c=ft.center;int n=(int)ft.vertices.size();float y=-0.01f;
-    for(int i=0;i<n;i++){auto&v0=ft.vertices[i];auto&v1=ft.vertices[(i+1)%n];
-        v.insert(v.end(),{c.x,y,c.z,v0.x,y,v0.z,v1.x,y,v1.z});}
-    gpu.vertexCount=n*3;
-    glGenVertexArrays(1,&gpu.VAO);glGenBuffers(1,&gpu.VBO);glBindVertexArray(gpu.VAO);
-    glBindBuffer(GL_ARRAY_BUFFER,gpu.VBO);glBufferData(GL_ARRAY_BUFFER,v.size()*sizeof(float),v.data(),GL_STATIC_DRAW);
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
-    glBindVertexArray(0);m_foreignGPUs.push_back(gpu);
+void Renderer::BuildForeignGPU(const ForeignTerritory& ft) {
+    if (ft.vertices.size() < 3)return; ObstacleGPU gpu; std::vector<float>v;
+    glm::vec3 c = ft.center; int n = (int)ft.vertices.size();
+    for (int i = 0; i < n; i++) {
+        auto& v0 = ft.vertices[i]; auto& v1 = ft.vertices[(i + 1) % n];
+        // center=0 edge, vertices=1 edge (matches province format)
+        v.insert(v.end(), { c.x,0,c.z,0,0, v0.x,0,v0.z,1,0, v1.x,0,v1.z,1,0 });
+    }
+    gpu.vertexCount = n * 3;
+    glGenVertexArrays(1, &gpu.VAO); glGenBuffers(1, &gpu.VBO); glBindVertexArray(gpu.VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gpu.VBO);
+    glBufferData(GL_ARRAY_BUFFER, v.size() * sizeof(float), v.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1);
+    glBindVertexArray(0); m_foreignGPUs.push_back(gpu);
 }
 
 void Renderer::BuildFontTexture(){
@@ -167,16 +172,39 @@ void Renderer::InitShaders() {
     m_provinceShader = std::make_unique<Shader>();
     m_provinceShader->LoadFromSource(
         R"(#version 330 core
-    layout(location=0)in vec3 aPos;
-    layout(location=1)in vec2 aEdge;
-    uniform mat4 u_VP;
-    out vec3 v_W;
-    out float v_E;
-    void main(){
-        v_W = aPos;
-        v_E = aEdge.x;
-        gl_Position = u_VP * vec4(aPos, 1.0);
-    })",
+layout(location=0)in vec3 aPos;
+layout(location=1)in vec2 aEdge;
+uniform mat4 u_VP;
+out vec3 v_W;
+out float v_E;
+
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float noise(vec2 p){
+    vec2 i=floor(p); vec2 f=fract(p);
+    f=f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
+               mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+}
+float fbm(vec2 p){
+    float v=0.0, a=0.5;
+    for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.1; a*=0.5; }
+    return v;
+}
+
+void main(){
+    vec3 pos = aPos;
+    // Terrain height displacement
+    float h = fbm(pos.xz * 1.5) * 0.25;           // broad rolling hills
+    h += fbm(pos.xz * 4.0 + 50.0) * 0.08;         // medium detail
+    h += noise(pos.xz * 10.0) * 0.02;              // fine bumps
+    // Flatten edges slightly so borders don't float
+    h *= (1.0 - aEdge.x * 0.5);
+    pos.y += h;
+
+    v_W = pos;
+    v_E = aEdge.x;
+    gl_Position = u_VP * vec4(pos, 1.0);
+})",
 
         R"(#version 330 core
     in vec3 v_W;
@@ -260,13 +288,34 @@ void Renderer::InitShaders() {
     m_borderShader = std::make_unique<Shader>();
     m_borderShader->LoadFromSource(
         R"(#version 330 core
-    layout(location=0)in vec3 aPos;
-    uniform mat4 u_VP;
-    out vec3 v_W;
-    void main(){
-        v_W = aPos;
-        gl_Position = u_VP * vec4(aPos, 1.0);
-    })",
+layout(location=0)in vec3 aPos;
+uniform mat4 u_VP;
+out vec3 v_W;
+
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float noise(vec2 p){
+    vec2 i=floor(p); vec2 f=fract(p);
+    f=f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
+               mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+}
+float fbm(vec2 p){
+    float v=0.0, a=0.5;
+    for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.1; a*=0.5; }
+    return v;
+}
+
+void main(){
+    vec3 pos = aPos;
+    // Mountain height — significantly taller than terrain
+    float h = fbm(pos.xz * 2.0) * 0.6;
+    h += fbm(pos.xz * 5.0 + 30.0) * 0.2;
+    h += noise(pos.xz * 12.0) * 0.08;
+    pos.y += h + 0.15; // base lift above terrain
+
+    v_W = pos;
+    gl_Position = u_VP * vec4(pos, 1.0);
+})",
 
         R"(#version 330 core
     in vec3 v_W;
@@ -482,22 +531,29 @@ void Renderer::InitShaders() {
 void Renderer::BeginFrame(){glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);m_time+=0.016f;}
 void Renderer::EndFrame(){}
 
-void Renderer::RenderCampaignMap(const CampaignMap&map){
-    glStencilFunc(GL_ALWAYS,1,0xFF);glStencilOp(GL_KEEP,GL_KEEP,GL_REPLACE);glStencilMask(0xFF);
+void Renderer::RenderCampaignMap(const CampaignMap& map) {
+    // Both provinces AND foreign territories write stencil=1
+    glStencilFunc(GL_ALWAYS, 1, 0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+    glStencilMask(0xFF);
     RenderProvinces(map);
-    glStencilFunc(GL_EQUAL,0,0xFF);glStencilMask(0x00);
+    RenderForeignTerritories(map);  // ← MOVE HERE (before water)
+
+    // Water only draws where stencil=0 (ocean)
+    glStencilFunc(GL_EQUAL, 0, 0xFF);
+    glStencilMask(0x00);
     RenderWater();
-    glStencilFunc(GL_ALWAYS,0,0xFF);glStencilMask(0x00);
-    RenderForeignTerritories(map);
-    RenderObstacles(map);RenderBorders(map);
-    RenderMovementMesh(map);RenderPathArrows(map);
-    RenderCities(map);RenderArmies(map);RenderSelectionCircle(map);
+
+    // Everything else draws normally
+    glStencilFunc(GL_ALWAYS, 0, 0xFF);
+    glStencilMask(0x00);
+    RenderObstacles(map);
+    RenderBorders(map);
+    RenderMovementMesh(map); RenderPathArrows(map);
+    RenderCities(map); RenderArmies(map); RenderSelectionCircle(map);
     glStencilMask(0xFF);
 
-    // Map labels (world-space text)
     RenderMapLabels(map);
-
-    // HUD (2D overlay, after all 3D)
     RenderHUD(map);
     RenderNotification(map);
     RenderExchangeModal(map);
@@ -693,57 +749,58 @@ void Renderer::DrawWorldText(const std::string&text,glm::vec3 worldPos,float sca
 }
 
 // ── Foreign territories (surrounding countries) ───────────────
-void Renderer::RenderForeignTerritories(const CampaignMap&map){
-    m_borderShader->Use();
-    m_borderShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
-    auto&fts=map.GetForeignTerritories();
-    for(int i=0;i<(int)fts.size()&&i<(int)m_foreignGPUs.size();i++){
-        glm::vec3 c=fts[i].color * 0.65f; // less aggressive darkening
-        m_borderShader->SetVec3("u_Color",c);
+void Renderer::RenderForeignTerritories(const CampaignMap& map) {
+    m_provinceShader->Use();
+    m_provinceShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    auto& fts = map.GetForeignTerritories();
+    for (int i = 0; i < (int)fts.size() && i < (int)m_foreignGPUs.size(); i++) {
+        glm::vec3 c = fts[i].color * 0.55f;
+        m_provinceShader->SetVec3("u_Color", c);
         glBindVertexArray(m_foreignGPUs[i].VAO);
-        glDrawArrays(GL_TRIANGLES,0,m_foreignGPUs[i].vertexCount);
+        glDrawArrays(GL_TRIANGLES, 0, m_foreignGPUs[i].vertexCount);
     }
     glBindVertexArray(0);
 }
 
 // ── Map labels (province names, city names, army names, foreign countries) ──
-void Renderer::RenderMapLabels(const CampaignMap&map){
-    glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
+void Renderer::RenderMapLabels(const CampaignMap& map) {
+    glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST);
 
     // Province names
-    for(const auto&p:map.GetProvinces()){
-        glm::vec4 col={0.9f,0.88f,0.75f,0.85f};
-        DrawWorldText(p.name,{p.center.x,0.2f,p.center.z},1.2f,col);
+    for (const auto& p : map.GetProvinces()) {
+        glm::vec4 col = { 0.9f,0.88f,0.75f,0.85f };
+        float th = map.GetTerrainHeight(p.center.x, p.center.z);
+        DrawWorldText(p.name, { p.center.x,th + 0.3f,p.center.z }, 1.2f, col);
     }
 
-    // City names (smaller, below city markers)
-    for(const auto&p:map.GetProvinces()){
-        glm::vec4 col=p.isCapital?glm::vec4(1.0f,0.9f,0.5f,0.95f):glm::vec4(0.8f,0.75f,0.6f,0.8f);
-        float scale=p.isCapital?1.3f:1.0f;
-        DrawWorldText(p.cityName,{p.cityPos.x,0.15f,p.cityPos.z+0.35f},scale,col);
+    // City names
+    for (const auto& p : map.GetProvinces()) {
+        glm::vec4 col = p.isCapital ? glm::vec4(1.0f, 0.9f, 0.5f, 0.95f) : glm::vec4(0.8f, 0.75f, 0.6f, 0.8f);
+        float scale = p.isCapital ? 1.3f : 1.0f;
+        float th = map.GetTerrainHeight(p.cityPos.x, p.cityPos.z);
+        DrawWorldText(p.cityName, { p.cityPos.x,th + 0.25f,p.cityPos.z + 0.35f }, scale, col);
     }
 
-    // Army labels (general name + unit count)
-    for(const auto&a:map.GetArmies()){
-        if(a.isGarrisoned)continue;
-        const Faction*f=map.GetFaction(a.factionId);
-        glm::vec3 fc=f?f->color:glm::vec3(0.5f);
-        glm::vec4 col={fc.r*0.5f+0.5f,fc.g*0.5f+0.5f,fc.b*0.5f+0.5f,0.95f};
-        std::string label=a.generalName;
-        DrawWorldText(label,{a.worldPosition.x,1.1f,a.worldPosition.z},1.0f,col);
-        // Unit count below
-        std::string info=std::to_string(a.GetTotalManpower())+" men";
-        DrawWorldText(info,{a.worldPosition.x,1.0f,a.worldPosition.z+0.15f},0.8f,{0.8f,0.8f,0.75f,0.75f});
+    // Army labels
+    for (const auto& a : map.GetArmies()) {
+        if (a.isGarrisoned)continue;
+        const Faction* f = map.GetFaction(a.factionId);
+        glm::vec3 fc = f ? f->color : glm::vec3(0.5f);
+        glm::vec4 col = { fc.r * 0.5f + 0.5f,fc.g * 0.5f + 0.5f,fc.b * 0.5f + 0.5f,0.95f };
+        float th = map.GetTerrainHeight(a.worldPosition.x, a.worldPosition.z);
+        DrawWorldText(a.generalName, { a.worldPosition.x,th + 1.1f,a.worldPosition.z }, 1.0f, col);
+        std::string info = std::to_string(a.GetTotalManpower()) + " men";
+        DrawWorldText(info, { a.worldPosition.x,th + 1.0f,a.worldPosition.z + 0.15f }, 0.8f, { 0.8f,0.8f,0.75f,0.75f });
     }
 
     // Foreign country names
-    for(const auto&ft:map.GetForeignTerritories()){
-        DrawWorldText(ft.name,{ft.center.x,0.1f,ft.center.z},1.5f,{0.6f,0.55f,0.45f,0.7f});
+    for (const auto& ft : map.GetForeignTerritories()) {
+        float th = map.GetTerrainHeight(ft.center.x, ft.center.z);
+        DrawWorldText(ft.name, { ft.center.x,th + 0.2f,ft.center.z }, 1.5f, { 0.6f,0.55f,0.45f,0.7f });
     }
 
-    glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
+    glEnable(GL_DEPTH_TEST); glEnable(GL_STENCIL_TEST);
 }
-
 void Renderer::RenderMovementMesh(const CampaignMap&map){
     int sel=map.GetSelectedArmyId();if(sel<0)return;
     const Army*a=map.GetArmy(sel);if(!a||a->movementRange<0.05f)return;
@@ -757,10 +814,11 @@ void Renderer::RenderMovementMesh(const CampaignMap&map){
 
     // Build quad mesh from cells
     std::vector<float>verts;
-    for(const auto&c:cells){
-        float x=ng.toWX(c.gx),z=ng.toWZ(c.gz);
-        float h=cs*0.5f;
-        verts.insert(verts.end(),{x-h,y,z-h, x+h,y,z-h, x+h,y,z+h, x-h,y,z-h, x+h,y,z+h, x-h,y,z+h});
+    for (const auto& c : cells) {
+        float x = ng.toWX(c.gx), z = ng.toWZ(c.gz);
+        float h = cs * 0.5f;
+        float th = map.GetTerrainHeight(x, z) + 0.05f;
+        verts.insert(verts.end(), { x - h,th,z - h, x + h,th,z - h, x + h,th,z + h, x - h,th,z - h, x + h,th,z + h, x - h,th,z + h });
     }
     m_moveMeshVerts=(int)verts.size()/3;
 
@@ -817,7 +875,6 @@ void Renderer::RenderPathArrows(const CampaignMap&map){
         return a->fullPath.back();
     };
 
-    float pathY=0.07f;
 
     // Draw each turn's segment
     for(int turn=0;turn<(int)a->turnBreaks.size();turn++){
@@ -829,19 +886,22 @@ void Renderer::RenderPathArrows(const CampaignMap&map){
         std::vector<float>segVerts;
 
         // Start point (interpolated at segStart)
-        glm::vec3 startPt=interpAtDist(segStart);
-        segVerts.insert(segVerts.end(),{startPt.x,pathY,startPt.z});
+        glm::vec3 startPt = interpAtDist(segStart);
+        startPt.y = map.GetTerrainHeight(startPt.x, startPt.z) + 0.07f;
+        segVerts.insert(segVerts.end(), { startPt.x,startPt.y,startPt.z });
 
         // All path waypoints strictly between segStart and segEnd
         for(int i=0;i<pathLen;i++){
             if(cumDist[i]>segStart+0.01f && cumDist[i]<segEnd-0.01f){
-                segVerts.insert(segVerts.end(),{a->fullPath[i].x,pathY,a->fullPath[i].z});
+                float py = map.GetTerrainHeight(a->fullPath[i].x, a->fullPath[i].z) + 0.07f;
+                segVerts.insert(segVerts.end(), { a->fullPath[i].x,py,a->fullPath[i].z });
             }
         }
 
         // End point (interpolated at segEnd)
-        glm::vec3 endPt=interpAtDist(segEnd);
-        segVerts.insert(segVerts.end(),{endPt.x,pathY,endPt.z});
+        glm::vec3 endPt = interpAtDist(segEnd);
+        endPt.y = map.GetTerrainHeight(endPt.x, endPt.z) + 0.07f;
+        segVerts.insert(segVerts.end(), { endPt.x,endPt.y,endPt.z });
 
         if(segVerts.size()<6)continue; // need at least 2 points (6 floats)
 
@@ -858,10 +918,13 @@ void Renderer::RenderPathArrows(const CampaignMap&map){
 }
 
 void Renderer::RenderCities(const CampaignMap&map){
-    m_armyShader->Use();m_armyShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
+    m_armyShader->Use(); m_armyShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
     glBindVertexArray(m_cityVAO);
-    for(const auto&p:map.GetProvinces()){
-        glm::mat4 m=glm::translate(glm::mat4(1),p.cityPos);float sc=p.isCapital?1.8f:0.9f;m=glm::scale(m,glm::vec3(sc));
+    for (const auto& p : map.GetProvinces()) {
+        float th = map.GetTerrainHeight(p.cityPos.x, p.cityPos.z);
+        glm::vec3 pos = { p.cityPos.x, th, p.cityPos.z };
+        glm::mat4 m = glm::translate(glm::mat4(1), pos);
+        float sc = p.isCapital ? 1.8f : 0.9f; m = glm::scale(m, glm::vec3(sc));
         m_armyShader->SetMat4("u_Model",m);
         m_armyShader->SetVec3("u_Color",p.isCapital ? glm::vec3(0.85f,0.75f,0.50f) : glm::vec3(0.55f,0.48f,0.38f));
         m_armyShader->SetFloat("u_Selected",(p.id==map.GetSelectedProvinceId())?1.f:0.f);
@@ -870,10 +933,13 @@ void Renderer::RenderCities(const CampaignMap&map){
 }
 
 void Renderer::RenderArmies(const CampaignMap&map){
-    m_armyShader->Use();m_armyShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
+    m_armyShader->Use(); m_armyShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
     glBindVertexArray(m_markerVAO);
-    for(const auto&a:map.GetArmies()){const Faction*f=map.GetFaction(a.factionId);glm::vec3 col=f?f->color:glm::vec3(0.5f);
-        glm::mat4 m=glm::translate(glm::mat4(1),a.worldPosition);
+    for (const auto& a : map.GetArmies()) {
+        const Faction* f = map.GetFaction(a.factionId); glm::vec3 col = f ? f->color : glm::vec3(0.5f);
+        float th = map.GetTerrainHeight(a.worldPosition.x, a.worldPosition.z);
+        glm::vec3 pos = { a.worldPosition.x, th, a.worldPosition.z };
+        glm::mat4 m = glm::translate(glm::mat4(1), pos);
         m_armyShader->SetMat4("u_Model",m);m_armyShader->SetVec3("u_Color",col);
         m_armyShader->SetFloat("u_Selected",(a.id==map.GetSelectedArmyId())?1.f:0.f);
         glDrawArrays(GL_TRIANGLES,0,24);}
@@ -882,7 +948,9 @@ void Renderer::RenderArmies(const CampaignMap&map){
 
 void Renderer::RenderSelectionCircle(const CampaignMap&map){
     bool has=(map.GetSelectedArmyId()>=0||map.GetSelectedProvinceId()>=0);if(!has)return;
-    glm::vec3 pos=map.GetSelectionWorldPos();
+    glm::vec3 pos = map.GetSelectionWorldPos();
+    float th = map.GetTerrainHeight(pos.x, pos.z);
+    pos.y = th + 0.05f;
     m_overlayShader->Use();m_overlayShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
     float r=(map.GetSelectedArmyId()>=0)?0.5f:0.35f;
     glm::mat4 model=glm::translate(glm::mat4(1),pos);model=glm::scale(model,glm::vec3(r));

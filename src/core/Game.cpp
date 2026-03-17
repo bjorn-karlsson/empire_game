@@ -225,7 +225,12 @@ void Game::Update(float deltaTime)
 {
     Camera* cam = m_renderer->GetCamera();
     if (cam) cam->Update(deltaTime);
-
+    if (cam) {
+        cam->Update(deltaTime);
+        // Prevent camera from going underground
+        float minDist = 3.0f;
+        if (cam->GetDistance() < minDist) cam->SetDistance(minDist);
+    }
     // Safety timer to prevent freeze
     static float safetyTimer = 0;
     if (m_turnPhase != TurnExecPhase::IDLE) {

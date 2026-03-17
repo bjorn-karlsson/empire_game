@@ -288,11 +288,11 @@ void main(){
     m_borderShader = std::make_unique<Shader>();
     m_borderShader->LoadFromSource(
         R"(#version 330 core
-layout(location=0)in vec3 aPos;
-uniform mat4 u_VP;
-out vec3 v_W;
+in vec3 v_W;
+uniform vec3 u_Color;
+out vec4 FC;
 
-float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
 float noise(vec2 p){
     vec2 i=floor(p); vec2 f=fract(p);
     f=f*f*(3.0-2.0*f);
@@ -306,15 +306,41 @@ float fbm(vec2 p){
 }
 
 void main(){
-    vec3 pos = aPos;
-    // Mountain height — significantly taller than terrain
-    float h = fbm(pos.xz * 2.0) * 0.6;
-    h += fbm(pos.xz * 5.0 + 30.0) * 0.2;
-    h += noise(pos.xz * 12.0) * 0.08;
-    pos.y += h + 0.15; // base lift above terrain
+    float n = fbm(v_W.xz * 5.0);
+    float n2 = noise(v_W.xz * 20.0);
 
-    v_W = pos;
-    gl_Position = u_VP * vec4(pos, 1.0);
+    // Height-based coloring
+    float height = v_W.y;
+    vec3 grassBase = vec3(0.30, 0.42, 0.20);  // low foothills
+    vec3 rockMid   = vec3(0.45, 0.40, 0.35);  // mid rock
+    vec3 greyPeak  = vec3(0.60, 0.58, 0.55);  // high grey
+    vec3 snowCap   = vec3(0.92, 0.93, 0.95);  // snow
+
+    vec3 col;
+    if(height < 0.2){
+        col = mix(grassBase, rockMid, height / 0.2);
+    } else if(height < 0.45){
+        col = mix(rockMid, greyPeak, (height - 0.2) / 0.25);
+    } else {
+        col = mix(greyPeak, snowCap, clamp((height - 0.45) / 0.25, 0.0, 1.0));
+    }
+
+    // Rocky noise variation
+    col += (n - 0.5) * 0.12;
+    col += (n2 - 0.5) * 0.04;
+
+    // Lighting
+    vec3 lightDir = normalize(vec3(-0.5, 1.0, -0.3));
+    float eps = 0.08;
+    float hL = fbm((v_W.xz+vec2(-eps,0))*5.0);
+    float hR = fbm((v_W.xz+vec2(eps,0))*5.0);
+    float hD = fbm((v_W.xz+vec2(0,-eps))*5.0);
+    float hU = fbm((v_W.xz+vec2(0,eps))*5.0);
+    vec3 normal = normalize(vec3(hL-hR, 0.25, hD-hU));
+    float lit = 0.5 + 0.5 * max(dot(normal, lightDir), 0.0);
+    col *= lit;
+
+    FC = vec4(col, 1.0);
 })",
 
         R"(#version 330 core
@@ -572,12 +598,28 @@ void Renderer::RenderProvinces(const CampaignMap&map){
         glDrawArrays(GL_TRIANGLES,0,it->second.vertexCount);}glBindVertexArray(0);
 }
 
-void Renderer::RenderObstacles(const CampaignMap&map){
-    m_borderShader->Use();m_borderShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
-    auto&obs=map.GetObstacles();
-    for(int i=0;i<(int)obs.size()&&i<(int)m_obstacleGPUs.size();i++){
-        m_borderShader->SetVec3("u_Color",obs[i].color);
-        glBindVertexArray(m_obstacleGPUs[i].VAO);glDrawArrays(GL_TRIANGLES,0,m_obstacleGPUs[i].vertexCount);}
+void Renderer::RenderObstacles(const CampaignMap& map) {
+    auto& obs = map.GetObstacles();
+
+    // Mountains — use border shader (with height displacement)
+    m_borderShader->Use(); m_borderShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    for (int i = 0; i < (int)obs.size() && i < (int)m_obstacleGPUs.size(); i++) {
+        if (obs[i].type == "lake")continue; // skip lakes here
+        m_borderShader->SetVec3("u_Color", obs[i].color);
+        glBindVertexArray(m_obstacleGPUs[i].VAO);
+        glDrawArrays(GL_TRIANGLES, 0, m_obstacleGPUs[i].vertexCount);
+    }
+    glBindVertexArray(0);
+
+    // Lakes — use overlay shader (flat, no height, slight transparency)
+    m_overlayShader->Use(); m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    m_overlayShader->SetMat4("u_Model", glm::mat4(1.0f));
+    for (int i = 0; i < (int)obs.size() && i < (int)m_obstacleGPUs.size(); i++) {
+        if (obs[i].type != "lake")continue;
+        m_overlayShader->SetVec4("u_Color", { obs[i].color.r,obs[i].color.g,obs[i].color.b,0.85f });
+        glBindVertexArray(m_obstacleGPUs[i].VAO);
+        glDrawArrays(GL_TRIANGLES, 0, m_obstacleGPUs[i].vertexCount);
+    }
     glBindVertexArray(0);
 }
 
@@ -587,7 +629,9 @@ void Renderer::RenderBorders(const CampaignMap&map){
     m_overlayShader->SetMat4("u_Model",glm::mat4(1.0f));
 
     const Faction*player=map.GetPlayerFaction();
-    glDisable(GL_DEPTH_TEST);
+    
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
     glDepthMask(GL_FALSE);
     if(!player)return;
 
@@ -694,7 +738,7 @@ void Renderer::RenderBorders(const CampaignMap&map){
     glBindVertexArray(0);
     glLineWidth(1);
     glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_POLYGON_OFFSET_FILL);
 }
 
 // ── Movement mesh: green overlay from flood-fill cells ────────

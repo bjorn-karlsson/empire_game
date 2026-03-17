@@ -22,6 +22,24 @@ static bool PtInPoly(const glm::vec2&pt,const std::vector<glm::vec3>&v){
 }
 static glm::vec3 Centroid(const std::vector<glm::vec3>&v){glm::vec3 c(0);for(auto&p:v)c+=p;return c/(float)v.size();}
 
+// ─── Terrain height helpers (must match GPU shader exactly) ───
+static float terFract(float x) { return x - floorf(x); }
+static float terHash(float x, float y) { return terFract(sinf(x * 127.1f + y * 311.7f) * 43758.5453f); }
+static float terNoise(float x, float z) {
+    float ix = floorf(x), iz = floorf(z);
+    float fx = x - ix, fz = z - iz;
+    fx = fx * fx * (3.0f - 2.0f * fx);
+    fz = fz * fz * (3.0f - 2.0f * fz);
+    float a = terHash(ix, iz), b = terHash(ix + 1, iz);
+    float c = terHash(ix, iz + 1), d = terHash(ix + 1, iz + 1);
+    return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
+}
+static float terFbm(float x, float z) {
+    float v = 0.0f, a = 0.5f;
+    for (int i = 0; i < 4; i++) { v += a * terNoise(x, z); x *= 2.1f; z *= 2.1f; a *= 0.5f; }
+    return v;
+}
+
 bool CampaignMap::IsPointPassable(const glm::vec3&pos)const{
     glm::vec2 pt(pos.x,pos.z);
     for(auto&ob:m_obstacles)if(PtInPoly(pt,ob.vertices))return false;
@@ -255,9 +273,33 @@ static float s_fbm(float x, float z) {
 
 
 float CampaignMap::GetTerrainHeight(float x, float z)const {
-    float h = s_fbm(x * 1.5f, z * 1.5f) * 0.25f;
-    h += s_fbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.08f;
-    h += s_noise(x * 10.0f, z * 10.0f) * 0.02f;
+    // Base terrain (matches province shader)
+    float h = terFbm(x * 1.5f, z * 1.5f) * 0.25f;
+    h += terFbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.08f;
+    h += terNoise(x * 10.0f, z * 10.0f) * 0.02f;
+
+    // Check if point is inside a mountain obstacle — add mountain height
+    glm::vec2 pt(x, z);
+    for (const auto& ob : m_obstacles) {
+        if (ob.type == "lake")continue;
+        bool inside = false;
+        int n = (int)ob.vertices.size();
+        for (int i = 0, j = n - 1; i < n; j = i++) {
+            float zi = ob.vertices[i].z, zj = ob.vertices[j].z;
+            float xi = ob.vertices[i].x, xj = ob.vertices[j].x;
+            if (((zi > pt.y) != (zj > pt.y)) && (pt.x < (xj - xi) * (pt.y - zi) / (zj - zi) + xi))
+                inside = !inside;
+        }
+        if (inside) {
+            // Match border vertex shader mountain height
+            float mh = terFbm(x * 2.0f, z * 2.0f) * 0.6f;
+            mh += terFbm(x * 5.0f + 30.0f, z * 5.0f + 30.0f) * 0.2f;
+            mh += terNoise(x * 12.0f, z * 12.0f) * 0.08f;
+            mh += 0.15f;
+            h = mh; // mountain height replaces terrain height
+            break;
+        }
+    }
     return h;
 }
 

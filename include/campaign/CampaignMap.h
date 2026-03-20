@@ -63,7 +63,8 @@ public:
 
     // Terrain height at world position (matches shader displacement)
     float GetTerrainHeight(float x, float z) const;
-
+    float GetBaseTerrainHeight(float x, float z) const;
+    bool IsInsideMountain(float x, float z) const;
     Province* GetProvince(int id);
     const Province* GetProvince(int id) const;
     Province* GetProvinceAtWorldPos(const glm::vec3&);

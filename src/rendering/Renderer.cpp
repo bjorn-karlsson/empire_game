@@ -72,24 +72,29 @@ void Renderer::BuildProvinceGPU(const Province&prov){
     glBindVertexArray(0);m_provinceGPUs[prov.id]=gpu;
 }
 
-void Renderer::BuildObstacleGPU(const TerrainObstacle&ob){
-    if(ob.vertices.size()<3)return;ObstacleGPU gpu;std::vector<float>v;
-    glm::vec3 c=ob.center;int n=(int)ob.vertices.size();float y=0.05f;
-    for(int i=0;i<n;i++){auto&v0=ob.vertices[i];auto&v1=ob.vertices[(i+1)%n];
-        v.insert(v.end(),{c.x,y,c.z,v0.x,y,v0.z,v1.x,y,v1.z});}
-    gpu.vertexCount=n*3;
-    glGenVertexArrays(1,&gpu.VAO);glGenBuffers(1,&gpu.VBO);glBindVertexArray(gpu.VAO);
-    glBindBuffer(GL_ARRAY_BUFFER,gpu.VBO);glBufferData(GL_ARRAY_BUFFER,v.size()*sizeof(float),v.data(),GL_STATIC_DRAW);
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
-    glBindVertexArray(0);m_obstacleGPUs.push_back(gpu);
+// ── BuildObstacleGPU ──────────────────────────────────────────
+void Renderer::BuildObstacleGPU(const TerrainObstacle& ob) {
+    if (ob.vertices.size() < 3)return; ObstacleGPU gpu; std::vector<float>v;
+    glm::vec3 c = ob.center; int n = (int)ob.vertices.size();
+    for (int i = 0; i < n; i++) {
+        auto& v0 = ob.vertices[i]; auto& v1 = ob.vertices[(i + 1) % n];
+        // center=edge0, border verts=edge1 (4 floats per vert: x,y,z,edge)
+        v.insert(v.end(), { c.x,0,c.z,0, v0.x,0,v0.z,1, v1.x,0,v1.z,1 });
+    }
+    gpu.vertexCount = n * 3;
+    glGenVertexArrays(1, &gpu.VAO); glGenBuffers(1, &gpu.VBO); glBindVertexArray(gpu.VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gpu.VBO); glBufferData(GL_ARRAY_BUFFER, v.size() * sizeof(float), v.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1);
+    glBindVertexArray(0); m_obstacleGPUs.push_back(gpu);
 }
 
+// ── BuildForeignGPU ───────────────────────────────────────────
 void Renderer::BuildForeignGPU(const ForeignTerritory& ft) {
     if (ft.vertices.size() < 3)return; ObstacleGPU gpu; std::vector<float>v;
     glm::vec3 c = ft.center; int n = (int)ft.vertices.size();
     for (int i = 0; i < n; i++) {
         auto& v0 = ft.vertices[i]; auto& v1 = ft.vertices[(i + 1) % n];
-        // center=0 edge, vertices=1 edge (matches province format)
         v.insert(v.end(), { c.x,0,c.z,0,0, v0.x,0,v0.z,1,0, v1.x,0,v1.z,1,0 });
     }
     gpu.vertexCount = n * 3;
@@ -166,9 +171,10 @@ void Renderer::BuildArmyMarker(){
 // ═══════════════════════════════════════════════════════════════
 // Shaders
 // ═══════════════════════════════════════════════════════════════
+// ── InitShaders ───────────────────────────────────────────────
 void Renderer::InitShaders() {
 
-    // ── PROVINCE SHADER: Procedural terrain with noise, lighting, edge darkening ──
+    // ── PROVINCE SHADER ──
     m_provinceShader = std::make_unique<Shader>();
     m_provinceShader->LoadFromSource(
         R"(#version 330 core
@@ -177,7 +183,7 @@ layout(location=1)in vec2 aEdge;
 uniform mat4 u_VP;
 out vec3 v_W;
 out float v_E;
-
+ 
 float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float noise(vec2 p){
     vec2 i=floor(p); vec2 f=fract(p);
@@ -190,108 +196,102 @@ float fbm(vec2 p){
     for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.1; a*=0.5; }
     return v;
 }
-
 void main(){
     vec3 pos = aPos;
-    // Terrain height displacement
-    float h = fbm(pos.xz * 1.5) * 0.25;           // broad rolling hills
-    h += fbm(pos.xz * 4.0 + 50.0) * 0.08;         // medium detail
-    h += noise(pos.xz * 10.0) * 0.02;              // fine bumps
-    // Flatten edges slightly so borders don't float
+    float h = fbm(pos.xz * 1.5) * 0.25;
+    h += fbm(pos.xz * 4.0 + 50.0) * 0.08;
+    h += noise(pos.xz * 10.0) * 0.02;
     h *= (1.0 - aEdge.x * 0.5);
     pos.y += h;
-
     v_W = pos;
     v_E = aEdge.x;
     gl_Position = u_VP * vec4(pos, 1.0);
 })",
+R"(#version 330 core
+in vec3 v_W;
+in float v_E;
+uniform vec3 u_Color;
+out vec4 FC;
+ 
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p){
+    vec2 i = floor(p); vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y);
+}
+float fbm(vec2 p){
+    float v = 0.0, a = 0.5;
+    for(int i = 0; i < 5; i++){ v += a * noise(p); p *= 2.1; a *= 0.5; }
+    return v;
+}
+void main(){
+    vec3 grassGreen = vec3(0.35, 0.52, 0.22);
+    vec3 dryGrass   = vec3(0.55, 0.50, 0.30);
+    vec3 darkEarth  = vec3(0.30, 0.25, 0.18);
+    float n1 = fbm(v_W.xz * 3.0);
+    float n2 = fbm(v_W.xz * 8.0 + 42.0);
+    float n3 = noise(v_W.xz * 25.0);
+    vec3 terrain = mix(grassGreen, dryGrass, n1 * 0.7);
+    terrain = mix(terrain, darkEarth, n2 * 0.15);
+    vec3 col = mix(terrain, u_Color, 0.25);
+    col += (n3 - 0.5) * 0.04;
+    float edge = smoothstep(0.5, 0.95, v_E);
+    col *= (1.0 - edge * 0.35);
+    vec3 lightDir = normalize(vec3(-0.5, 1.0, -0.3));
+    float eps = 0.1;
+    float hL = fbm((v_W.xz + vec2(-eps, 0)) * 3.0);
+    float hR = fbm((v_W.xz + vec2(eps, 0)) * 3.0);
+    float hD = fbm((v_W.xz + vec2(0, -eps)) * 3.0);
+    float hU = fbm((v_W.xz + vec2(0, eps)) * 3.0);
+    vec3 normal = normalize(vec3(hL - hR, 0.3, hD - hU));
+    float NdotL = max(dot(normal, lightDir), 0.0);
+    col *= 0.55 + 0.45 * NdotL;
+    float dist = length(v_W.xz);
+    float fog = smoothstep(8.0, 18.0, dist);
+    col = mix(col, vec3(0.45, 0.52, 0.62), fog * 0.25);
+    FC = vec4(col, 1.0);
+})");
 
-        R"(#version 330 core
-    in vec3 v_W;
-    in float v_E;
-    uniform vec3 u_Color;
-    out vec4 FC;
-
-    // Simple hash-based noise (no texture needed)
-    float hash(vec2 p){
-        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-    }
-    float noise(vec2 p){
-        vec2 i = floor(p);
-        vec2 f = fract(p);
-        f = f * f * (3.0 - 2.0 * f); // smoothstep
-        float a = hash(i);
-        float b = hash(i + vec2(1,0));
-        float c = hash(i + vec2(0,1));
-        float d = hash(i + vec2(1,1));
-        return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
-    }
-    float fbm(vec2 p){
-        float v = 0.0;
-        float a = 0.5;
-        for(int i = 0; i < 5; i++){
-            v += a * noise(p);
-            p *= 2.1;
-            a *= 0.5;
-        }
-        return v;
-    }
-
-    void main(){
-        // Base terrain color (greener, more natural)
-        vec3 grassGreen = vec3(0.35, 0.52, 0.22);
-        vec3 dryGrass   = vec3(0.55, 0.50, 0.30);
-        vec3 darkEarth  = vec3(0.30, 0.25, 0.18);
-
-        // Procedural terrain variation
-        float n1 = fbm(v_W.xz * 3.0);
-        float n2 = fbm(v_W.xz * 8.0 + 42.0);
-        float n3 = noise(v_W.xz * 25.0);
-
-        // Mix between grass tones based on noise
-        vec3 terrain = mix(grassGreen, dryGrass, n1 * 0.7);
-        terrain = mix(terrain, darkEarth, n2 * 0.15);
-
-        // Tint with faction color (subtle — 25%)
-        vec3 col = mix(terrain, u_Color, 0.25);
-
-        // Fine detail grain
-        col += (n3 - 0.5) * 0.04;
-
-        // Edge darkening (province borders)
-        float edge = smoothstep(0.5, 0.95, v_E);
-        col *= (1.0 - edge * 0.35);
-
-        // Simple directional light from northwest
-        vec3 lightDir = normalize(vec3(-0.5, 1.0, -0.3));
-        // Fake normal from noise gradient
-        float eps = 0.1;
-        float hL = fbm((v_W.xz + vec2(-eps, 0)) * 3.0);
-        float hR = fbm((v_W.xz + vec2(eps, 0)) * 3.0);
-        float hD = fbm((v_W.xz + vec2(0, -eps)) * 3.0);
-        float hU = fbm((v_W.xz + vec2(0, eps)) * 3.0);
-        vec3 normal = normalize(vec3(hL - hR, 0.3, hD - hU));
-        float NdotL = max(dot(normal, lightDir), 0.0);
-        float lighting = 0.55 + 0.45 * NdotL;
-        col *= lighting;
-
-        // Atmospheric fog (distance-based blueish tint)
-        float dist = length(v_W.xz);
-        float fog = smoothstep(8.0, 18.0, dist);
-        vec3 fogColor = vec3(0.45, 0.52, 0.62);
-        col = mix(col, fogColor, fog * 0.25);
-
-        FC = vec4(col, 1.0);
-    })");
-
-    // ── BORDER SHADER: Simple flat color (also used for obstacles) ──
+    // ── BORDER / MOUNTAIN SHADER ──
     m_borderShader = std::make_unique<Shader>();
     m_borderShader->LoadFromSource(
         R"(#version 330 core
+layout(location=0)in vec3 aPos;
+layout(location=1)in float aEdge;
+uniform mat4 u_VP;
+out vec3 v_W;
+ 
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float noise(vec2 p){
+    vec2 i=floor(p); vec2 f=fract(p);
+    f=f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
+               mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+}
+float fbm(vec2 p){
+    float v=0.0, a=0.5;
+    for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.1; a*=0.5; }
+    return v;
+}
+void main(){
+    vec3 pos = aPos;
+    float terrainH = fbm(pos.xz * 1.5) * 0.25;
+    terrainH += fbm(pos.xz * 4.0 + 50.0) * 0.08;
+    terrainH += noise(pos.xz * 10.0) * 0.02;
+    float mountainH = fbm(pos.xz * 2.0) * 0.6;
+    mountainH += fbm(pos.xz * 5.0 + 30.0) * 0.2;
+    mountainH += noise(pos.xz * 12.0) * 0.08;
+    mountainH += 0.1;
+    float edgeFade = 1.0 - aEdge;
+    pos.y = terrainH + mountainH * edgeFade;
+    v_W = pos;
+    gl_Position = u_VP * vec4(pos, 1.0);
+})",
+R"(#version 330 core
 in vec3 v_W;
 uniform vec3 u_Color;
 out vec4 FC;
-
+ 
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
 float noise(vec2 p){
     vec2 i=floor(p); vec2 f=fract(p);
@@ -304,32 +304,20 @@ float fbm(vec2 p){
     for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.1; a*=0.5; }
     return v;
 }
-
 void main(){
     float n = fbm(v_W.xz * 5.0);
     float n2 = noise(v_W.xz * 20.0);
-
-    // Height-based coloring
     float height = v_W.y;
-    vec3 grassBase = vec3(0.30, 0.42, 0.20);  // low foothills
-    vec3 rockMid   = vec3(0.45, 0.40, 0.35);  // mid rock
-    vec3 greyPeak  = vec3(0.60, 0.58, 0.55);  // high grey
-    vec3 snowCap   = vec3(0.92, 0.93, 0.95);  // snow
-
+    vec3 grassBase = vec3(0.30, 0.42, 0.20);
+    vec3 rockMid   = vec3(0.45, 0.40, 0.35);
+    vec3 greyPeak  = vec3(0.60, 0.58, 0.55);
+    vec3 snowCap   = vec3(0.92, 0.93, 0.95);
     vec3 col;
-    if(height < 0.2){
-        col = mix(grassBase, rockMid, height / 0.2);
-    } else if(height < 0.45){
-        col = mix(rockMid, greyPeak, (height - 0.2) / 0.25);
-    } else {
-        col = mix(greyPeak, snowCap, clamp((height - 0.45) / 0.25, 0.0, 1.0));
-    }
-
-    // Rocky noise variation
+    if(height < 0.2)       col = mix(grassBase, rockMid, height / 0.2);
+    else if(height < 0.45) col = mix(rockMid, greyPeak, (height - 0.2) / 0.25);
+    else                   col = mix(greyPeak, snowCap, clamp((height - 0.45) / 0.25, 0.0, 1.0));
     col += (n - 0.5) * 0.12;
     col += (n2 - 0.5) * 0.04;
-
-    // Lighting
     vec3 lightDir = normalize(vec3(-0.5, 1.0, -0.3));
     float eps = 0.08;
     float hL = fbm((v_W.xz+vec2(-eps,0))*5.0);
@@ -339,244 +327,171 @@ void main(){
     vec3 normal = normalize(vec3(hL-hR, 0.25, hD-hU));
     float lit = 0.5 + 0.5 * max(dot(normal, lightDir), 0.0);
     col *= lit;
-
     FC = vec4(col, 1.0);
-})",
+})");
 
-        R"(#version 330 core
-    in vec3 v_W;
-    uniform vec3 u_Color;
-    out vec4 FC;
-
-    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
-    float noise(vec2 p){
-        vec2 i=floor(p); vec2 f=fract(p);
-        f=f*f*(3.0-2.0*f);
-        return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
-                   mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
-    }
-    float fbm(vec2 p){
-        float v=0.0, a=0.5;
-        for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.1; a*=0.5; }
-        return v;
-    }
-
-    void main(){
-        // Procedural rocky texture for mountains/obstacles
-        float n = fbm(v_W.xz * 5.0);
-        float n2 = noise(v_W.xz * 20.0);
-        vec3 col = u_Color;
-
-        // Add rocky variation
-        col += (n - 0.5) * 0.15;
-        col += (n2 - 0.5) * 0.05;
-
-        // Slight lighting
-        vec3 lightDir = normalize(vec3(-0.5, 1.0, -0.3));
-        float eps = 0.08;
-        float hL = fbm((v_W.xz+vec2(-eps,0))*5.0);
-        float hR = fbm((v_W.xz+vec2(eps,0))*5.0);
-        float hD = fbm((v_W.xz+vec2(0,-eps))*5.0);
-        float hU = fbm((v_W.xz+vec2(0,eps))*5.0);
-        vec3 normal = normalize(vec3(hL-hR, 0.25, hD-hU));
-        float lit = 0.5 + 0.5 * max(dot(normal, lightDir), 0.0);
-        col *= lit;
-
-        FC = vec4(col, 1.0);
-    })");
-
-    // ── WATER SHADER: Deep ocean with waves, foam, and reflections ──
+    // ── WATER SHADER ──
     m_waterShader = std::make_unique<Shader>();
     m_waterShader->LoadFromSource(
         R"(#version 330 core
-    layout(location=0)in vec3 aPos;
-    uniform mat4 u_VP;
-    uniform float u_Time;
-    out vec3 v_W;
-    void main(){
-        vec3 p = aPos;
-        // Vertex wave displacement
-        float wave1 = sin(p.x * 1.5 + u_Time * 0.8) * cos(p.z * 1.2 + u_Time * 0.6) * 0.04;
-        float wave2 = sin(p.x * 3.0 - u_Time * 1.2) * sin(p.z * 2.5 + u_Time * 0.9) * 0.02;
-        p.y += wave1 + wave2;
-        v_W = p;
-        gl_Position = u_VP * vec4(p, 1.0);
-    })",
+layout(location=0)in vec3 aPos;
+uniform mat4 u_VP;
+uniform float u_Time;
+out vec3 v_W;
+void main(){
+    vec3 p = aPos;
+    float wave1 = sin(p.x * 1.5 + u_Time * 0.8) * cos(p.z * 1.2 + u_Time * 0.6) * 0.04;
+    float wave2 = sin(p.x * 3.0 - u_Time * 1.2) * sin(p.z * 2.5 + u_Time * 0.9) * 0.02;
+    p.y += wave1 + wave2;
+    v_W = p;
+    gl_Position = u_VP * vec4(p, 1.0);
+})",
+R"(#version 330 core
+in vec3 v_W;
+uniform float u_Time;
+out vec4 FC;
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float noise(vec2 p){
+    vec2 i=floor(p); vec2 f=fract(p);
+    f=f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+}
+void main(){
+    vec2 uv = v_W.xz;
+    vec3 deepWater = vec3(0.05, 0.12, 0.22);
+    vec3 shallowWater = vec3(0.10, 0.25, 0.38);
+    vec3 highlight = vec3(0.20, 0.40, 0.55);
+    float wave1 = sin(uv.x * 2.5 + u_Time * 0.7) * cos(uv.y * 2.0 + u_Time * 0.5);
+    float wave2 = sin(uv.x * 5.0 - u_Time * 1.1 + uv.y * 3.0) * 0.5;
+    float wave3 = noise(uv * 4.0 + u_Time * 0.3) * 0.4;
+    float waves = wave1 * 0.3 + wave2 * 0.2 + wave3;
+    float depth = noise(uv * 0.5) * 0.5 + 0.5;
+    vec3 col = mix(deepWater, shallowWater, depth * 0.6);
+    float spec = smoothstep(0.3, 0.8, waves);
+    col = mix(col, highlight, spec * 0.4);
+    float sparkle = noise(uv * 15.0 + u_Time * vec2(0.5, 0.3));
+    sparkle = pow(sparkle, 4.0) * 0.3;
+    col += vec3(sparkle * 0.5, sparkle * 0.7, sparkle);
+    float dist = length(uv);
+    col = mix(col, vec3(0.03, 0.06, 0.12), smoothstep(5.0, 25.0, dist) * 0.5);
+    FC = vec4(col, 0.92);
+})");
 
-        R"(#version 330 core
-    in vec3 v_W;
-    uniform float u_Time;
-    out vec4 FC;
-
-    float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
-    float noise(vec2 p){
-        vec2 i=floor(p); vec2 f=fract(p);
-        f=f*f*(3.0-2.0*f);
-        return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
-                   mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
-    }
-
-    void main(){
-        vec2 uv = v_W.xz;
-
-        // Deep ocean base color
-        vec3 deepWater  = vec3(0.05, 0.12, 0.22);
-        vec3 shallowWater = vec3(0.10, 0.25, 0.38);
-        vec3 highlight  = vec3(0.20, 0.40, 0.55);
-
-        // Animated wave pattern
-        float wave1 = sin(uv.x * 2.5 + u_Time * 0.7) * cos(uv.y * 2.0 + u_Time * 0.5);
-        float wave2 = sin(uv.x * 5.0 - u_Time * 1.1 + uv.y * 3.0) * 0.5;
-        float wave3 = noise(uv * 4.0 + u_Time * 0.3) * 0.4;
-        float waves = wave1 * 0.3 + wave2 * 0.2 + wave3;
-
-        // Depth variation
-        float depth = noise(uv * 0.5) * 0.5 + 0.5;
-        vec3 col = mix(deepWater, shallowWater, depth * 0.6);
-
-        // Wave highlights (specular-like)
-        float spec = smoothstep(0.3, 0.8, waves);
-        col = mix(col, highlight, spec * 0.4);
-
-        // Bright caustic-like sparkles
-        float sparkle = noise(uv * 15.0 + u_Time * vec2(0.5, 0.3));
-        sparkle = pow(sparkle, 4.0) * 0.3;
-        col += vec3(sparkle * 0.5, sparkle * 0.7, sparkle);
-
-        // Distance fog (deeper = darker)
-        float dist = length(uv);
-        float fogAmount = smoothstep(5.0, 25.0, dist);
-        vec3 fogColor = vec3(0.03, 0.06, 0.12);
-        col = mix(col, fogColor, fogAmount * 0.5);
-
-        // Slight transparency near edges
-        float alpha = 0.92;
-
-        FC = vec4(col, alpha);
-    })");
-
-    // ── ARMY MARKER SHADER: Lit 3D objects ──
+    // ── ARMY MARKER SHADER ──
     m_armyShader = std::make_unique<Shader>();
     m_armyShader->LoadFromSource(
         R"(#version 330 core
-    layout(location=0)in vec3 aPos;
-    uniform mat4 u_VP;
-    uniform mat4 u_Model;
-    out vec3 v_Pos;
-    out vec3 v_Normal;
-    void main(){
-        vec4 worldPos = u_Model * vec4(aPos, 1.0);
-        v_Pos = worldPos.xyz;
-        // Approximate normal from position (for simple shapes)
-        v_Normal = normalize(mat3(u_Model) * aPos);
-        gl_Position = u_VP * worldPos;
-    })",
+layout(location=0)in vec3 aPos;
+uniform mat4 u_VP;
+uniform mat4 u_Model;
+out vec3 v_Pos;
+out vec3 v_Normal;
+void main(){
+    vec4 worldPos = u_Model * vec4(aPos, 1.0);
+    v_Pos = worldPos.xyz;
+    v_Normal = normalize(mat3(u_Model) * aPos);
+    gl_Position = u_VP * worldPos;
+})",
+R"(#version 330 core
+in vec3 v_Pos;
+in vec3 v_Normal;
+uniform vec3 u_Color;
+uniform float u_Selected;
+out vec4 FC;
+void main(){
+    vec3 lightDir = normalize(vec3(-0.4, 0.8, -0.3));
+    float NdotL = max(dot(normalize(v_Normal), lightDir), 0.0);
+    vec3 col = u_Color * (0.4 + 0.6 * NdotL);
+    if(u_Selected > 0.5) col += vec3(0.15, 0.3, 0.1) * (0.5 + 0.5 * sin(v_Pos.y * 10.0));
+    FC = vec4(col, 1.0);
+})");
 
-        R"(#version 330 core
-    in vec3 v_Pos;
-    in vec3 v_Normal;
-    uniform vec3 u_Color;
-    uniform float u_Selected;
-    out vec4 FC;
-    void main(){
-        // Directional light
-        vec3 lightDir = normalize(vec3(-0.4, 0.8, -0.3));
-        float NdotL = max(dot(normalize(v_Normal), lightDir), 0.0);
-        float lighting = 0.4 + 0.6 * NdotL;
-
-        vec3 col = u_Color * lighting;
-
-        // Selection glow
-        if(u_Selected > 0.5){
-            col += vec3(0.15, 0.3, 0.1) * (0.5 + 0.5 * sin(v_Pos.y * 10.0));
-        }
-
-        FC = vec4(col, 1.0);
-    })");
-
-    // ── OVERLAY SHADER (movement mesh, selection circle, path arrows) ──
+    // ── OVERLAY SHADER ──
     m_overlayShader = std::make_unique<Shader>();
     m_overlayShader->LoadFromSource(
         R"(#version 330 core
-    layout(location=0)in vec3 aPos;
-    uniform mat4 u_VP;
-    uniform mat4 u_Model;
-    void main(){gl_Position=u_VP*u_Model*vec4(aPos,1);})",
-        R"(#version 330 core
-    uniform vec4 u_Color;
-    out vec4 FC;
-    void main(){FC=u_Color;})");
+layout(location=0)in vec3 aPos;
+uniform mat4 u_VP;
+uniform mat4 u_Model;
+void main(){gl_Position=u_VP*u_Model*vec4(aPos,1);})",
+R"(#version 330 core
+uniform vec4 u_Color;
+out vec4 FC;
+void main(){FC=u_Color;})");
 
-    // ── SCREEN QUAD SHADER (for HUD rectangles) ──
+    // ── SCREEN QUAD SHADER ──
     m_screenShader = std::make_unique<Shader>();
     m_screenShader->LoadFromSource(
         R"(#version 330 core
-    layout(location=0)in vec2 aPos;
-    uniform vec4 u_Rect;
-    uniform vec4 u_Screen;
-    void main(){
-        vec2 p = u_Rect.xy + aPos * u_Rect.zw;
-        vec2 ndc = (p / u_Screen.xy) * 2.0 - 1.0;
-        ndc.y = -ndc.y;
-        gl_Position = vec4(ndc, 0.0, 1.0);
-    })",
-        R"(#version 330 core
-    uniform vec4 u_Color;
-    out vec4 FC;
-    void main(){FC=u_Color;})");
+layout(location=0)in vec2 aPos;
+uniform vec4 u_Rect;
+uniform vec4 u_Screen;
+void main(){
+    vec2 p = u_Rect.xy + aPos * u_Rect.zw;
+    vec2 ndc = (p / u_Screen.xy) * 2.0 - 1.0;
+    ndc.y = -ndc.y;
+    gl_Position = vec4(ndc, 0.0, 1.0);
+})",
+R"(#version 330 core
+uniform vec4 u_Color;
+out vec4 FC;
+void main(){FC=u_Color;})");
 
-    // ── TEXT SHADER (bitmap font rendering) ──
+    // ── TEXT SHADER ──
     m_textShader = std::make_unique<Shader>();
     m_textShader->LoadFromSource(
         R"(#version 330 core
-    layout(location=0)in vec2 aPos;
-    layout(location=1)in vec2 aUV;
-    uniform vec4 u_Rect;
-    uniform vec4 u_Screen;
-    out vec2 v_UV;
-    void main(){
-        v_UV = aUV;
-        vec2 ndc = (aPos / u_Screen.xy) * 2.0 - 1.0;
-        ndc.y = -ndc.y;
-        gl_Position = vec4(ndc, 0.0, 1.0);
-    })",
-        R"(#version 330 core
-    in vec2 v_UV;
-    uniform sampler2D u_Font;
-    uniform vec4 u_Color;
-    out vec4 FC;
-    void main(){
-        float a = texture(u_Font, v_UV).r;
-        if(a < 0.5) discard;
-        FC = u_Color;
-    })");
+layout(location=0)in vec2 aPos;
+layout(location=1)in vec2 aUV;
+uniform vec4 u_Screen;
+out vec2 v_UV;
+void main(){
+    v_UV = aUV;
+    vec2 ndc = (aPos / u_Screen.xy) * 2.0 - 1.0;
+    ndc.y = -ndc.y;
+    gl_Position = vec4(ndc, 0.0, 1.0);
+})",
+R"(#version 330 core
+in vec2 v_UV;
+uniform sampler2D u_Font;
+uniform vec4 u_Color;
+out vec4 FC;
+void main(){
+    float a = texture(u_Font, v_UV).r;
+    if(a < 0.5) discard;
+    FC = u_Color;
+})");
 }
+
+
+
 // ═══════════════════════════════════════════════════════════════
 // RENDER
 // ═══════════════════════════════════════════════════════════════
 void Renderer::BeginFrame(){glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);m_time+=0.016f;}
 void Renderer::EndFrame(){}
 
+// ── RenderCampaignMap ─────────────────────────────────────────
 void Renderer::RenderCampaignMap(const CampaignMap& map) {
-    // Both provinces AND foreign territories write stencil=1
     glStencilFunc(GL_ALWAYS, 1, 0xFF);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     glStencilMask(0xFF);
     RenderProvinces(map);
-    RenderForeignTerritories(map);  // ← MOVE HERE (before water)
+    RenderForeignTerritories(map);
 
-    // Water only draws where stencil=0 (ocean)
     glStencilFunc(GL_EQUAL, 0, 0xFF);
     glStencilMask(0x00);
     RenderWater();
 
-    // Everything else draws normally
     glStencilFunc(GL_ALWAYS, 0, 0xFF);
     glStencilMask(0x00);
     RenderObstacles(map);
     RenderBorders(map);
-    RenderMovementMesh(map); RenderPathArrows(map);
-    RenderCities(map); RenderArmies(map); RenderSelectionCircle(map);
+    RenderMovementMesh(map);
+    RenderPathArrows(map);
+    RenderCities(map);
+    RenderArmies(map);
+    RenderSelectionCircle(map);
     glStencilMask(0xFF);
 
     RenderMapLabels(map);
@@ -584,7 +499,6 @@ void Renderer::RenderCampaignMap(const CampaignMap& map) {
     RenderNotification(map);
     RenderExchangeModal(map);
 }
-
 void Renderer::RenderWater(){
     m_waterShader->Use();m_waterShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
     m_waterShader->SetFloat("u_Time",m_time);
@@ -597,22 +511,24 @@ void Renderer::RenderProvinces(const CampaignMap&map){
         m_provinceShader->SetVec3("u_Color",p.color);glBindVertexArray(it->second.VAO);
         glDrawArrays(GL_TRIANGLES,0,it->second.vertexCount);}glBindVertexArray(0);
 }
-
+// ── RenderObstacles ───────────────────────────────────────────
 void Renderer::RenderObstacles(const CampaignMap& map) {
     auto& obs = map.GetObstacles();
 
-    // Mountains — use border shader (with height displacement)
-    m_borderShader->Use(); m_borderShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    // Mountains
+    m_borderShader->Use();
+    m_borderShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
     for (int i = 0; i < (int)obs.size() && i < (int)m_obstacleGPUs.size(); i++) {
-        if (obs[i].type == "lake")continue; // skip lakes here
+        if (obs[i].type == "lake")continue;
         m_borderShader->SetVec3("u_Color", obs[i].color);
         glBindVertexArray(m_obstacleGPUs[i].VAO);
         glDrawArrays(GL_TRIANGLES, 0, m_obstacleGPUs[i].vertexCount);
     }
     glBindVertexArray(0);
 
-    // Lakes — use overlay shader (flat, no height, slight transparency)
-    m_overlayShader->Use(); m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    // Lakes (flat, no height)
+    m_overlayShader->Use();
+    m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
     m_overlayShader->SetMat4("u_Model", glm::mat4(1.0f));
     for (int i = 0; i < (int)obs.size() && i < (int)m_obstacleGPUs.size(); i++) {
         if (obs[i].type != "lake")continue;
@@ -622,125 +538,118 @@ void Renderer::RenderObstacles(const CampaignMap& map) {
     }
     glBindVertexArray(0);
 }
-
-void Renderer::RenderBorders(const CampaignMap&map){
+// ── RenderBorders ─────────────────────────────────────────────
+void Renderer::RenderBorders(const CampaignMap& map) {
     m_overlayShader->Use();
-    m_overlayShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
-    m_overlayShader->SetMat4("u_Model",glm::mat4(1.0f));
+    m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    m_overlayShader->SetMat4("u_Model", glm::mat4(1.0f));
 
-    const Faction*player=map.GetPlayerFaction();
-    
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
+    const Faction* player = map.GetPlayerFaction();
+    if (!player)return;
+
+    glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
-    if(!player)return;
 
-    float borderY = 0.005f;
-    float insetAmount=0.03f; // how far inward the line is drawn from the actual edge
+    float insetAmount = 0.03f;
 
-    // Helper: check if a point is on land (inside any province or foreign territory)
-    auto isOnLand=[&](glm::vec2 pt)->bool{
-        for(const auto&p:map.GetProvinces()){
-            // Quick bounding check then PtInPoly
-            bool inside=false;
-            int n=(int)p.borderVertices.size();
-            for(int i=0,j=n-1;i<n;j=i++){
-                float zi=p.borderVertices[i].z, zj=p.borderVertices[j].z;
-                float xi=p.borderVertices[i].x, xj=p.borderVertices[j].x;
-                if(((zi>pt.y)!=(zj>pt.y))&&(pt.x<(xj-xi)*(pt.y-zi)/(zj-zi)+xi))
-                    inside=!inside;
+    auto isOnLand = [&](glm::vec2 pt)->bool {
+        for (const auto& p : map.GetProvinces()) {
+            bool inside = false;
+            int n = (int)p.borderVertices.size();
+            for (int i = 0, j = n - 1; i < n; j = i++) {
+                float zi = p.borderVertices[i].z, zj = p.borderVertices[j].z;
+                float xi = p.borderVertices[i].x, xj = p.borderVertices[j].x;
+                if (((zi > pt.y) != (zj > pt.y)) && (pt.x < (xj - xi) * (pt.y - zi) / (zj - zi) + xi))
+                    inside = !inside;
             }
-            if(inside)return true;
+            if (inside)return true;
         }
-        for(const auto&ft:map.GetForeignTerritories()){
-            bool inside=false;
-            int n=(int)ft.vertices.size();
-            for(int i=0,j=n-1;i<n;j=i++){
-                float zi=ft.vertices[i].z, zj=ft.vertices[j].z;
-                float xi=ft.vertices[i].x, xj=ft.vertices[j].x;
-                if(((zi>pt.y)!=(zj>pt.y))&&(pt.x<(xj-xi)*(pt.y-zi)/(zj-zi)+xi))
-                    inside=!inside;
+        for (const auto& ft : map.GetForeignTerritories()) {
+            bool inside = false;
+            int n = (int)ft.vertices.size();
+            for (int i = 0, j = n - 1; i < n; j = i++) {
+                float zi = ft.vertices[i].z, zj = ft.vertices[j].z;
+                float xi = ft.vertices[i].x, xj = ft.vertices[j].x;
+                if (((zi > pt.y) != (zj > pt.y)) && (pt.x < (xj - xi) * (pt.y - zi) / (zj - zi) + xi))
+                    inside = !inside;
             }
-            if(inside)return true;
+            if (inside)return true;
         }
         return false;
-    };
+        };
 
-    // Diplomatic color based on province owner's relation to player
-    auto getDiploColor=[&](const Province&p)->glm::vec4{
-        if(p.ownerFactionId==player->id)
-            return {0.2f,0.7f,0.2f,1.0f}; // own = green
-
-        const Faction*f=map.GetFaction(p.ownerFactionId);
-        if(!f) return {0.8f,0.8f,0.8f,0.7f}; // unknown = white
-
-        DiplomaticStatus status=f->GetRelationWith(player->id);
-        switch(status){
-            case DiplomaticStatus::WAR:
-                return {0.85f,0.15f,0.1f,1.0f};  // war = red
-            case DiplomaticStatus::ALLIANCE:
-                return {0.2f,0.35f,0.85f,1.0f};   // ally = blue
-            case DiplomaticStatus::TRADE_AGREEMENT:
-                return {0.3f,0.6f,0.85f,0.9f};    // trade = light blue
-            default:
-                return {0.8f,0.8f,0.75f,0.7f};    // neutral = white/cream
+    auto getDiploColor = [&](const Province& p)->glm::vec4 {
+        if (p.ownerFactionId == player->id)
+            return{ 0.2f,0.7f,0.2f,1.0f };
+        const Faction* f = map.GetFaction(p.ownerFactionId);
+        if (!f)return{ 0.8f,0.8f,0.8f,0.7f };
+        DiplomaticStatus status = f->GetRelationWith(player->id);
+        switch (status) {
+        case DiplomaticStatus::WAR:            return{ 0.85f,0.15f,0.1f,1.0f };
+        case DiplomaticStatus::ALLIANCE:       return{ 0.2f,0.35f,0.85f,1.0f };
+        case DiplomaticStatus::TRADE_AGREEMENT:return{ 0.3f,0.6f,0.85f,0.9f };
+        default:                               return{ 0.8f,0.8f,0.75f,0.7f };
         }
-    };
+        };
 
-    // Draw each province's border as an inset line
-    for(const auto&p:map.GetProvinces()){
-        glm::vec4 col=getDiploColor(p);
-        int n=(int)p.borderVertices.size();
-        if(n<3)continue;
+    for (const auto& p : map.GetProvinces()) {
+        glm::vec4 col = getDiploColor(p);
+        int n = (int)p.borderVertices.size();
+        if (n < 3)continue;
 
-        glm::vec2 center2D(p.center.x,p.center.z);
+        glm::vec2 center2D(p.center.x, p.center.z);
+        std::vector<float>verts;
+        int drawn = 0;
 
-        // Build inset + filtered border vertices
-        std::vector<float> verts;
-        int drawn=0;
-
-        for(int i=0;i<n;i++){
+        for (int i = 0; i < n; i++) {
             glm::vec2 v0(p.borderVertices[i].x, p.borderVertices[i].z);
-            glm::vec2 v1(p.borderVertices[(i+1)%n].x, p.borderVertices[(i+1)%n].z);
+            glm::vec2 v1(p.borderVertices[(i + 1) % n].x, p.borderVertices[(i + 1) % n].z);
 
-            // Check if this edge is coastal (midpoint not on any OTHER land)
-            glm::vec2 mid=(v0+v1)*0.5f;
-            // Offset midpoint slightly outward to test the other side
-            glm::vec2 toCenter=glm::normalize(center2D-mid);
-            glm::vec2 testPt=mid-toCenter*0.15f; // slightly outside the province
+            glm::vec2 mid = (v0 + v1) * 0.5f;
+            glm::vec2 toCenter = glm::normalize(center2D - mid);
+            glm::vec2 testPt = mid - toCenter * 0.15f;
+            if (!isOnLand(testPt))continue;
 
-            bool isCoastalEdge=!isOnLand(testPt);
-            if(isCoastalEdge)continue; // skip water borders
+            // Skip edges where midpoint is inside a mountain
+            if (map.IsInsideMountain(mid.x, mid.y))continue;
 
-            // Inset both vertices toward center
-            glm::vec2 inV0=v0+glm::normalize(center2D-v0)*insetAmount;
-            glm::vec2 inV1=v1+glm::normalize(center2D-v1)*insetAmount;
+            glm::vec2 inV0 = v0 + glm::normalize(center2D - v0) * insetAmount;
+            glm::vec2 inV1 = v1 + glm::normalize(center2D - v1) * insetAmount;
 
-            verts.insert(verts.end(),{inV0.x, borderY, inV0.y});
-            verts.insert(verts.end(),{inV1.x, borderY, inV1.y});
+            // Use BASE terrain height only (no mountain)
+            float y0 = map.GetBaseTerrainHeight(inV0.x, inV0.y) + 0.02f;
+            float y1 = map.GetBaseTerrainHeight(inV1.x, inV1.y) + 0.02f;
+
+            verts.insert(verts.end(), { inV0.x,y0,inV0.y });
+            verts.insert(verts.end(), { inV1.x,y1,inV1.y });
             drawn++;
         }
 
-        if(drawn<1)continue;
+        if (drawn < 1)continue;
 
-        glBindVertexArray(m_pathVAO);glBindBuffer(GL_ARRAY_BUFFER,m_pathVBO);
-        glBufferData(GL_ARRAY_BUFFER,verts.size()*sizeof(float),verts.data(),GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);
+        glBindVertexArray(m_pathVAO); glBindBuffer(GL_ARRAY_BUFFER, m_pathVBO);
+        glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(0);
 
-        m_overlayShader->SetVec4("u_Color",col);
+        bool isOwn = (p.ownerFactionId == player->id);
 
-        bool isOwn=(p.ownerFactionId==player->id);
-        glLineWidth(isOwn?3.0f:2.0f);
-        glDrawArrays(GL_LINES,0,(int)verts.size()/3);
+        // Pass 1: Black outline (slightly wider)
+        m_overlayShader->SetVec4("u_Color", { 0.0f,0.0f,0.0f,col.a * 0.8f });
+        glLineWidth(isOwn ? 4.5f : 3.5f);
+        glDrawArrays(GL_LINES, 0, (int)verts.size() / 3);
+
+        // Pass 2: Colored line on top (thinner)
+        m_overlayShader->SetVec4("u_Color", col);
+        glLineWidth(isOwn ? 2.5f : 1.5f);
+        glDrawArrays(GL_LINES, 0, (int)verts.size() / 3);
     }
 
     glBindVertexArray(0);
     glLineWidth(1);
     glDepthMask(GL_TRUE);
-    glDisable(GL_POLYGON_OFFSET_FILL);
+    //glEnable(GL_DEPTH_TEST);
 }
-
 // ── Movement mesh: green overlay from flood-fill cells ────────
 // ── Screen-space text using bitmap font ───────────────────────
 void Renderer::DrawScreenText(const std::string&text,float x,float y,float scale,glm::vec4 color){
@@ -792,7 +701,7 @@ void Renderer::DrawWorldText(const std::string&text,glm::vec3 worldPos,float sca
     DrawScreenText(text,sx-textW*0.5f,sy,scale,color);
 }
 
-// ── Foreign territories (surrounding countries) ───────────────
+// ── RenderForeignTerritories ──────────────────────────────────
 void Renderer::RenderForeignTerritories(const CampaignMap& map) {
     m_provinceShader->Use();
     m_provinceShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
@@ -806,26 +715,25 @@ void Renderer::RenderForeignTerritories(const CampaignMap& map) {
     glBindVertexArray(0);
 }
 
+
 // ── Map labels (province names, city names, army names, foreign countries) ──
+// ── RenderMapLabels ───────────────────────────────────────────
 void Renderer::RenderMapLabels(const CampaignMap& map) {
     glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST);
 
-    // Province names
     for (const auto& p : map.GetProvinces()) {
         glm::vec4 col = { 0.9f,0.88f,0.75f,0.85f };
-        float th = map.GetTerrainHeight(p.center.x, p.center.z);
+        float th = map.GetBaseTerrainHeight(p.center.x, p.center.z);
         DrawWorldText(p.name, { p.center.x,th + 0.3f,p.center.z }, 1.2f, col);
     }
 
-    // City names
     for (const auto& p : map.GetProvinces()) {
         glm::vec4 col = p.isCapital ? glm::vec4(1.0f, 0.9f, 0.5f, 0.95f) : glm::vec4(0.8f, 0.75f, 0.6f, 0.8f);
         float scale = p.isCapital ? 1.3f : 1.0f;
-        float th = map.GetTerrainHeight(p.cityPos.x, p.cityPos.z);
+        float th = map.GetBaseTerrainHeight(p.cityPos.x, p.cityPos.z);
         DrawWorldText(p.cityName, { p.cityPos.x,th + 0.25f,p.cityPos.z + 0.35f }, scale, col);
     }
 
-    // Army labels
     for (const auto& a : map.GetArmies()) {
         if (a.isGarrisoned)continue;
         const Faction* f = map.GetFaction(a.factionId);
@@ -837,26 +745,25 @@ void Renderer::RenderMapLabels(const CampaignMap& map) {
         DrawWorldText(info, { a.worldPosition.x,th + 1.0f,a.worldPosition.z + 0.15f }, 0.8f, { 0.8f,0.8f,0.75f,0.75f });
     }
 
-    // Foreign country names
     for (const auto& ft : map.GetForeignTerritories()) {
-        float th = map.GetTerrainHeight(ft.center.x, ft.center.z);
+        float th = map.GetBaseTerrainHeight(ft.center.x, ft.center.z);
         DrawWorldText(ft.name, { ft.center.x,th + 0.2f,ft.center.z }, 1.5f, { 0.6f,0.55f,0.45f,0.7f });
     }
 
     glEnable(GL_DEPTH_TEST); glEnable(GL_STENCIL_TEST);
 }
-void Renderer::RenderMovementMesh(const CampaignMap&map){
-    int sel=map.GetSelectedArmyId();if(sel<0)return;
-    const Army*a=map.GetArmy(sel);if(!a||a->movementRange<0.05f)return;
-    if(a->isMoving)return; // don't show mesh while moving
+// ── RenderMovementMesh ────────────────────────────────────────
+void Renderer::RenderMovementMesh(const CampaignMap& map) {
+    int sel = map.GetSelectedArmyId(); if (sel < 0)return;
+    const Army* a = map.GetArmy(sel); if (!a || a->movementRange < 0.05f)return;
+    if (a->isMoving)return;
 
-    auto cells=map.GetReachableCells(sel);
-    if(cells.empty())return;
+    auto cells = map.GetReachableCells(sel);
+    if (cells.empty())return;
 
-    const auto&ng=map.GetNavGrid();
-    float cs=NavGrid::CELL;float y=0.04f;
+    const auto& ng = map.GetNavGrid();
+    float cs = NavGrid::CELL;
 
-    // Build quad mesh from cells
     std::vector<float>verts;
     for (const auto& c : cells) {
         float x = ng.toWX(c.gx), z = ng.toWZ(c.gz);
@@ -864,144 +771,154 @@ void Renderer::RenderMovementMesh(const CampaignMap&map){
         float th = map.GetTerrainHeight(x, z) + 0.05f;
         verts.insert(verts.end(), { x - h,th,z - h, x + h,th,z - h, x + h,th,z + h, x - h,th,z - h, x + h,th,z + h, x - h,th,z + h });
     }
-    m_moveMeshVerts=(int)verts.size()/3;
+    m_moveMeshVerts = (int)verts.size() / 3;
 
-    glBindVertexArray(m_moveMeshVAO);glBindBuffer(GL_ARRAY_BUFFER,m_moveMeshVBO);
-    glBufferData(GL_ARRAY_BUFFER,verts.size()*sizeof(float),verts.data(),GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
+    glBindVertexArray(m_moveMeshVAO); glBindBuffer(GL_ARRAY_BUFFER, m_moveMeshVBO);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
 
     glDepthMask(GL_FALSE);
-    m_overlayShader->Use();m_overlayShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
-    m_overlayShader->SetMat4("u_Model",glm::mat4(1.0f));
-    m_overlayShader->SetVec4("u_Color",{0.15f,0.6f,0.25f,0.25f});
-    glDrawArrays(GL_TRIANGLES,0,m_moveMeshVerts);
+    m_overlayShader->Use();
+    m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    m_overlayShader->SetMat4("u_Model", glm::mat4(1.0f));
+    m_overlayShader->SetVec4("u_Color", { 0.15f,0.6f,0.25f,0.25f });
+    glDrawArrays(GL_TRIANGLES, 0, m_moveMeshVerts);
     glBindVertexArray(0);
     glDepthMask(GL_TRUE);
 }
 
 // ── Path arrows with multi-turn colors ────────────────────────
 // Green=this turn, Red=turn2, Blue=turn3, Yellow=turn4, Purple=turn5+
-void Renderer::RenderPathArrows(const CampaignMap&map){
-    int sel=map.GetSelectedArmyId();if(sel<0)return;
-    const Army*a=map.GetArmy(sel);if(!a||a->fullPath.size()<2)return;
+// ── RenderPathArrows ──────────────────────────────────────────
+void Renderer::RenderPathArrows(const CampaignMap& map) {
+    int sel = map.GetSelectedArmyId(); if (sel < 0)return;
+    const Army* a = map.GetArmy(sel); if (!a || a->fullPath.size() < 2)return;
 
-    glm::vec4 turnColors[]={
-        {0.2f,0.85f,0.3f,1.0f},  // green - this turn
-        {0.9f,0.2f,0.2f,1.0f},   // red - turn 2
-        {0.2f,0.5f,0.95f,1.0f},  // blue - turn 3
-        {0.95f,0.85f,0.2f,1.0f}, // yellow - turn 4
-        {0.7f,0.3f,0.9f,1.0f},   // purple - turn 5+
+    glm::vec4 turnColors[] = {
+        {0.2f,0.85f,0.3f,1.0f},
+        {0.9f,0.2f,0.2f,1.0f},
+        {0.2f,0.5f,0.95f,1.0f},
+        {0.95f,0.85f,0.2f,1.0f},
+        {0.7f,0.3f,0.9f,1.0f},
     };
-    int numColors=(int)(sizeof(turnColors)/sizeof(turnColors[0]));
+    int numColors = 5;
 
-    m_overlayShader->Use();m_overlayShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
-    m_overlayShader->SetMat4("u_Model",glm::mat4(1.0f));
+    m_overlayShader->Use();
+    m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    m_overlayShader->SetMat4("u_Model", glm::mat4(1.0f));
 
-    // Build cumulative distance table
-    int pathLen=(int)a->fullPath.size();
-    std::vector<float>cumDist(pathLen,0);
-    for(int i=1;i<pathLen;i++)
-        cumDist[i]=cumDist[i-1]+glm::distance(
-            glm::vec2(a->fullPath[i].x,a->fullPath[i].z),
-            glm::vec2(a->fullPath[i-1].x,a->fullPath[i-1].z));
+    int pathLen = (int)a->fullPath.size();
+    std::vector<float>cumDist(pathLen, 0);
+    for (int i = 1; i < pathLen; i++)
+        cumDist[i] = cumDist[i - 1] + glm::distance(
+            glm::vec2(a->fullPath[i].x, a->fullPath[i].z),
+            glm::vec2(a->fullPath[i - 1].x, a->fullPath[i - 1].z));
 
-    // Helper: interpolate a point along the path at a given cumulative distance
-    auto interpAtDist=[&](float d)->glm::vec3{
-        if(d<=0)return a->fullPath[0];
-        if(d>=cumDist.back())return a->fullPath.back();
-        for(int i=1;i<pathLen;i++){
-            if(cumDist[i]>=d){
-                float segLen=cumDist[i]-cumDist[i-1];
-                float t=(segLen>0.001f)?(d-cumDist[i-1])/segLen:0;
-                return glm::mix(a->fullPath[i-1],a->fullPath[i],t);
+    auto interpAtDist = [&](float d)->glm::vec3 {
+        if (d <= 0)return a->fullPath[0];
+        if (d >= cumDist.back())return a->fullPath.back();
+        for (int i = 1; i < pathLen; i++) {
+            if (cumDist[i] >= d) {
+                float segLen = cumDist[i] - cumDist[i - 1];
+                float t = (segLen > 0.001f) ? (d - cumDist[i - 1]) / segLen : 0;
+                return glm::mix(a->fullPath[i - 1], a->fullPath[i], t);
             }
         }
         return a->fullPath.back();
-    };
+        };
 
-
-    // Draw each turn's segment
-    for(int turn=0;turn<(int)a->turnBreaks.size();turn++){
+    for (int turn = 0; turn < (int)a->turnBreaks.size(); turn++) {
         float segStart = a->pathStartOffset + ((turn == 0) ? a->distanceTraveled : a->turnBreaks[std::max(0, turn - 1)]);
         float segEnd = a->pathStartOffset + a->turnBreaks[turn];
-        if(segEnd<=segStart+0.01f)continue;
+        if (segEnd <= segStart + 0.01f)continue;
 
-        // Collect points: start interpolated point + all waypoints in range + end interpolated point
         std::vector<float>segVerts;
 
-        // Start point (interpolated at segStart)
         glm::vec3 startPt = interpAtDist(segStart);
         startPt.y = map.GetTerrainHeight(startPt.x, startPt.z) + 0.07f;
         segVerts.insert(segVerts.end(), { startPt.x,startPt.y,startPt.z });
 
-        // All path waypoints strictly between segStart and segEnd
-        for(int i=0;i<pathLen;i++){
-            if(cumDist[i]>segStart+0.01f && cumDist[i]<segEnd-0.01f){
+        for (int i = 0; i < pathLen; i++) {
+            if (cumDist[i] > segStart + 0.01f && cumDist[i] < segEnd - 0.01f) {
                 float py = map.GetTerrainHeight(a->fullPath[i].x, a->fullPath[i].z) + 0.07f;
                 segVerts.insert(segVerts.end(), { a->fullPath[i].x,py,a->fullPath[i].z });
             }
         }
 
-        // End point (interpolated at segEnd)
         glm::vec3 endPt = interpAtDist(segEnd);
         endPt.y = map.GetTerrainHeight(endPt.x, endPt.z) + 0.07f;
         segVerts.insert(segVerts.end(), { endPt.x,endPt.y,endPt.z });
 
-        if(segVerts.size()<6)continue; // need at least 2 points (6 floats)
+        if (segVerts.size() < 6)continue;
 
-        glBindVertexArray(m_pathVAO);glBindBuffer(GL_ARRAY_BUFFER,m_pathVBO);
-        glBufferData(GL_ARRAY_BUFFER,segVerts.size()*sizeof(float),segVerts.data(),GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
+        glBindVertexArray(m_pathVAO); glBindBuffer(GL_ARRAY_BUFFER, m_pathVBO);
+        glBufferData(GL_ARRAY_BUFFER, segVerts.size() * sizeof(float), segVerts.data(), GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
 
-        int ci=std::min(turn,numColors-1);
-        m_overlayShader->SetVec4("u_Color",turnColors[ci]);
-        glLineWidth(turn==0?5.0f:3.5f);
-        glDrawArrays(GL_LINE_STRIP,0,(int)segVerts.size()/3);
+        int ci = std::min(turn, numColors - 1);
+        m_overlayShader->SetVec4("u_Color", turnColors[ci]);
+        glLineWidth(turn == 0 ? 5.0f : 3.5f);
+        glDrawArrays(GL_LINE_STRIP, 0, (int)segVerts.size() / 3);
     }
-    glBindVertexArray(0);glLineWidth(1);
+    glBindVertexArray(0); glLineWidth(1);
 }
-
-void Renderer::RenderCities(const CampaignMap&map){
-    m_armyShader->Use(); m_armyShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+// ── RenderCities ──────────────────────────────────────────────
+void Renderer::RenderCities(const CampaignMap& map) {
+    m_armyShader->Use();
+    m_armyShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
     glBindVertexArray(m_cityVAO);
     for (const auto& p : map.GetProvinces()) {
-        float th = map.GetTerrainHeight(p.cityPos.x, p.cityPos.z);
-        glm::vec3 pos = { p.cityPos.x, th, p.cityPos.z };
+        // Use base terrain (no mountain) so cities are always reachable
+        float th = map.GetBaseTerrainHeight(p.cityPos.x, p.cityPos.z) + 0.02f;
+        glm::vec3 pos = { p.cityPos.x,th,p.cityPos.z };
         glm::mat4 m = glm::translate(glm::mat4(1), pos);
-        float sc = p.isCapital ? 1.8f : 0.9f; m = glm::scale(m, glm::vec3(sc));
-        m_armyShader->SetMat4("u_Model",m);
-        m_armyShader->SetVec3("u_Color",p.isCapital ? glm::vec3(0.85f,0.75f,0.50f) : glm::vec3(0.55f,0.48f,0.38f));
-        m_armyShader->SetFloat("u_Selected",(p.id==map.GetSelectedProvinceId())?1.f:0.f);
-        glDrawArrays(GL_TRIANGLES,0,30);}
+        float sc = p.isCapital ? 1.8f : 0.9f;
+        m = glm::scale(m, glm::vec3(sc));
+        m_armyShader->SetMat4("u_Model", m);
+        m_armyShader->SetVec3("u_Color", p.isCapital ? glm::vec3(0.85f, 0.75f, 0.50f) : glm::vec3(0.55f, 0.48f, 0.38f));
+        m_armyShader->SetFloat("u_Selected", (p.id == map.GetSelectedProvinceId()) ? 1.f : 0.f);
+        glDrawArrays(GL_TRIANGLES, 0, 30);
+    }
     glBindVertexArray(0);
 }
-
-void Renderer::RenderArmies(const CampaignMap&map){
-    m_armyShader->Use(); m_armyShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+// ── RenderArmies ──────────────────────────────────────────────
+void Renderer::RenderArmies(const CampaignMap& map) {
+    m_armyShader->Use();
+    m_armyShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
     glBindVertexArray(m_markerVAO);
     for (const auto& a : map.GetArmies()) {
-        const Faction* f = map.GetFaction(a.factionId); glm::vec3 col = f ? f->color : glm::vec3(0.5f);
-        float th = map.GetTerrainHeight(a.worldPosition.x, a.worldPosition.z);
-        glm::vec3 pos = { a.worldPosition.x, th, a.worldPosition.z };
+        const Faction* f = map.GetFaction(a.factionId);
+        glm::vec3 col = f ? f->color : glm::vec3(0.5f);
+        float th = map.GetTerrainHeight(a.worldPosition.x, a.worldPosition.z) + 0.02f;
+        glm::vec3 pos = { a.worldPosition.x,th,a.worldPosition.z };
         glm::mat4 m = glm::translate(glm::mat4(1), pos);
-        m_armyShader->SetMat4("u_Model",m);m_armyShader->SetVec3("u_Color",col);
-        m_armyShader->SetFloat("u_Selected",(a.id==map.GetSelectedArmyId())?1.f:0.f);
-        glDrawArrays(GL_TRIANGLES,0,24);}
+        m_armyShader->SetMat4("u_Model", m);
+        m_armyShader->SetVec3("u_Color", col);
+        m_armyShader->SetFloat("u_Selected", (a.id == map.GetSelectedArmyId()) ? 1.f : 0.f);
+        glDrawArrays(GL_TRIANGLES, 0, 24);
+    }
     glBindVertexArray(0);
 }
 
-void Renderer::RenderSelectionCircle(const CampaignMap&map){
-    bool has=(map.GetSelectedArmyId()>=0||map.GetSelectedProvinceId()>=0);if(!has)return;
+// ── RenderSelectionCircle ─────────────────────────────────────
+void Renderer::RenderSelectionCircle(const CampaignMap& map) {
+    bool has = (map.GetSelectedArmyId() >= 0 || map.GetSelectedProvinceId() >= 0);
+    if (!has)return;
     glm::vec3 pos = map.GetSelectionWorldPos();
     float th = map.GetTerrainHeight(pos.x, pos.z);
     pos.y = th + 0.05f;
-    m_overlayShader->Use();m_overlayShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
-    float r=(map.GetSelectedArmyId()>=0)?0.5f:0.35f;
-    glm::mat4 model=glm::translate(glm::mat4(1),pos);model=glm::scale(model,glm::vec3(r));
-    m_overlayShader->SetMat4("u_Model",model);
-    m_overlayShader->SetVec4("u_Color",{0.2f,0.9f,0.3f,1.0f});
-    glLineWidth(3);glBindVertexArray(m_circleVAO);glDrawArrays(GL_LINE_STRIP,0,m_circleVerts);
-    glBindVertexArray(0);glLineWidth(1);
+    m_overlayShader->Use();
+    m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    float r = (map.GetSelectedArmyId() >= 0) ? 0.5f : 0.35f;
+    glm::mat4 model = glm::translate(glm::mat4(1), pos);
+    model = glm::scale(model, glm::vec3(r));
+    m_overlayShader->SetMat4("u_Model", model);
+    m_overlayShader->SetVec4("u_Color", { 0.2f,0.9f,0.3f,1.0f });
+    glLineWidth(3);
+    glBindVertexArray(m_circleVAO);
+    glDrawArrays(GL_LINE_STRIP, 0, m_circleVerts);
+    glBindVertexArray(0);
+    glLineWidth(1);
 }
 
 // ── Draw a 2D screen-space quad ───────────────────────────────

@@ -271,14 +271,11 @@ static float s_fbm(float x, float z) {
     return v;
 }
 
-
 float CampaignMap::GetTerrainHeight(float x, float z)const {
-    // Base terrain (matches province shader)
     float h = terFbm(x * 1.5f, z * 1.5f) * 0.25f;
     h += terFbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.08f;
     h += terNoise(x * 10.0f, z * 10.0f) * 0.02f;
 
-    // Check if point is inside a mountain obstacle — add mountain height
     glm::vec2 pt(x, z);
     for (const auto& ob : m_obstacles) {
         if (ob.type == "lake")continue;
@@ -291,16 +288,40 @@ float CampaignMap::GetTerrainHeight(float x, float z)const {
                 inside = !inside;
         }
         if (inside) {
-            // Match border vertex shader mountain height
+            // Mountain height ON TOP of terrain base (matches shader)
             float mh = terFbm(x * 2.0f, z * 2.0f) * 0.6f;
             mh += terFbm(x * 5.0f + 30.0f, z * 5.0f + 30.0f) * 0.2f;
             mh += terNoise(x * 12.0f, z * 12.0f) * 0.08f;
-            mh += 0.15f;
-            h = mh; // mountain height replaces terrain height
+            mh += 0.1f;
+            h += mh;  // ADD to terrain, don't replace
             break;
         }
     }
     return h;
+}
+
+float CampaignMap::GetBaseTerrainHeight(float x, float z)const {
+    float h = terFbm(x * 1.5f, z * 1.5f) * 0.25f;
+    h += terFbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.08f;
+    h += terNoise(x * 10.0f, z * 10.0f) * 0.02f;
+    return h;
+}
+
+bool CampaignMap::IsInsideMountain(float x, float z)const {
+    glm::vec2 pt(x, z);
+    for (const auto& ob : m_obstacles) {
+        if (ob.type == "lake")continue;
+        bool inside = false;
+        int n = (int)ob.vertices.size();
+        for (int i = 0, j = n - 1; i < n; j = i++) {
+            float zi = ob.vertices[i].z, zj = ob.vertices[j].z;
+            float xi = ob.vertices[i].x, xj = ob.vertices[j].x;
+            if (((zi > pt.y) != (zj > pt.y)) && (pt.x < (xj - xi) * (pt.y - zi) / (zj - zi) + xi))
+                inside = !inside;
+        }
+        if (inside)return true;
+    }
+    return false;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -545,6 +566,7 @@ void CampaignMap::GenerateTestMap() {
         { iBurDau,iDauAlp,cGenev,cAlpS,cNice,iDauPro,iAuvPro }, 180, false, false, "mountains"));
     m_provinces.push_back(mkP(13, "Auvergne", "Clermont", "france",
         { iLoiAuv,iAuvPro,iLanPro,iAuvLan,iAquLan,iPoiAqu,iLoiPoi }, 150, false, false, "mountains"));
+    m_provinces[13].cityPos = { -1.0f,0,3.5f };
     m_provinces.push_back(mkP(14, "Gascony", "Bayonne", "france",
         { iAquGas,cPyrW,cBayo,cBiarr,cBordS }, 120, true, false, "mountains"));
 

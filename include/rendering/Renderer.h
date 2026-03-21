@@ -25,7 +25,13 @@ public:
     void OnResize(int,int);
 
     void ClearMapGeometry();
-    void RenderEditorOverlay(const CampaignMap& map, int selProvIdx, int selVertIdx);
+    void RenderEditorOverlay(const CampaignMap& map,
+        int selProvIdx, int selVertIdx,
+        int selObsIdx, int selObsVertIdx,
+        int hoverProvIdx, int hoverVertIdx,
+        int hoverObsIdx, int hoverObsVertIdx);
+    void RenderEditorHUD(const std::string& toolName, const std::string& selInfo,
+        bool geometryDirty, int provinceCount, int obstacleCount);
     // Text rendering
     void DrawScreenText(const std::string& text, float x, float y, float scale, glm::vec4 color);
     void DrawWorldText(const std::string& text, glm::vec3 worldPos, float scale, glm::vec4 color);

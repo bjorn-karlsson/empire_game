@@ -2,11 +2,9 @@
 
 #include <string>
 #include <memory>
-#include <glad/glad.h>
 #include <vector>
 #include "editor/MapEditor.h"
 
-// Forward declarations
 struct GLFWwindow;
 
 class Renderer;
@@ -44,7 +42,7 @@ public:
     void SetState(GameState newState);
     GameState GetState() const { return m_state; }
 
-    Renderer*    GetRenderer()    const { return m_renderer.get(); }
+    Renderer* GetRenderer()    const { return m_renderer.get(); }
     InputManager* GetInput()     const { return m_input.get(); }
     CampaignMap* GetCampaignMap() const { return m_campaignMap.get(); }
 
@@ -57,7 +55,7 @@ private:
     void Render();
 
     GLFWwindow* m_window = nullptr;
-    int m_windowWidth  = 1280;
+    int m_windowWidth = 1280;
     int m_windowHeight = 720;
 
     GameState m_state = GameState::MAIN_MENU;

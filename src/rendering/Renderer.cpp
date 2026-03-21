@@ -1475,8 +1475,6 @@ void Renderer::RenderBattle(const BattleScene& battle){
     glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
 }
 void Renderer::OnResize(int w,int h){m_width=w;m_height=h;glViewport(0,0,w,h);if(m_camera)m_camera->OnResize((float)w/h);}
-
-
 void Renderer::ClearMapGeometry() {
     for (auto& [id, g] : m_provinceGPUs) {
         if (g.VAO) glDeleteVertexArrays(1, &g.VAO);
@@ -1497,57 +1495,224 @@ void Renderer::ClearMapGeometry() {
     m_foreignGPUs.clear();
 }
 
-void Renderer::RenderEditorOverlay(const CampaignMap& map, int selProvIdx, int selVertIdx) {
+void Renderer::RenderEditorOverlay(const CampaignMap& map, int selProvIdx, int selVertIdx,
+    int selObsIdx, int selObsVertIdx, int hoverProvIdx, int hoverVertIdx,
+    int hoverObsIdx, int hoverObsVertIdx)
+{
     glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+
     m_overlayShader->Use();
     m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
 
     auto& provs = map.GetProvinces();
+    auto& obs = map.GetObstacles();
 
-    // Draw all vertices as small dots
+    // ── 1. Draw province polygon outlines (selected province gets bright outline) ──
     for (int pi = 0; pi < (int)provs.size(); pi++) {
+        bool isSelected = (pi == selProvIdx);
+        bool isHovered = (pi == hoverProvIdx && pi != selProvIdx);
+        if (!isSelected && !isHovered) continue;
+
+        auto& p = provs[pi];
+        int n = (int)p.borderVertices.size();
+        if (n < 3) continue;
+
+        std::vector<float> lineVerts;
+        for (int i = 0; i < n; i++) {
+            auto& v0 = p.borderVertices[i];
+            auto& v1 = p.borderVertices[(i + 1) % n];
+            float y0 = map.GetTerrainHeight(v0.x, v0.z) + 0.2f;
+            float y1 = map.GetTerrainHeight(v1.x, v1.z) + 0.2f;
+            lineVerts.insert(lineVerts.end(), { v0.x, y0, v0.z, v1.x, y1, v1.z });
+        }
+
+        glBindVertexArray(m_pathVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, m_pathVBO);
+        glBufferData(GL_ARRAY_BUFFER, lineVerts.size() * sizeof(float), lineVerts.data(), GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+
+        if (isSelected) {
+            m_overlayShader->SetMat4("u_Model", glm::mat4(1.0f));
+            m_overlayShader->SetVec4("u_Color", { 1.0f, 0.9f, 0.2f, 0.9f });
+            glLineWidth(2.5f);
+        }
+        else {
+            m_overlayShader->SetMat4("u_Model", glm::mat4(1.0f));
+            m_overlayShader->SetVec4("u_Color", { 0.6f, 0.8f, 1.0f, 0.4f });
+            glLineWidth(1.5f);
+        }
+        glDrawArrays(GL_LINES, 0, (int)lineVerts.size() / 3);
+    }
+
+    // ── 2. Draw obstacle polygon outlines (selected) ──
+    for (int oi = 0; oi < (int)obs.size(); oi++) {
+        bool isSelected = (oi == selObsIdx);
+        if (!isSelected) continue;
+
+        auto& ob = obs[oi];
+        int n = (int)ob.vertices.size();
+        if (n < 3) continue;
+
+        std::vector<float> lineVerts;
+        for (int i = 0; i < n; i++) {
+            auto& v0 = ob.vertices[i];
+            auto& v1 = ob.vertices[(i + 1) % n];
+            float y0 = map.GetTerrainHeight(v0.x, v0.z) + 0.2f;
+            float y1 = map.GetTerrainHeight(v1.x, v1.z) + 0.2f;
+            lineVerts.insert(lineVerts.end(), { v0.x, y0, v0.z, v1.x, y1, v1.z });
+        }
+
+        glBindVertexArray(m_pathVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, m_pathVBO);
+        glBufferData(GL_ARRAY_BUFFER, lineVerts.size() * sizeof(float), lineVerts.data(), GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+
+        m_overlayShader->SetMat4("u_Model", glm::mat4(1.0f));
+        m_overlayShader->SetVec4("u_Color", { 0.9f, 0.5f, 0.2f, 0.8f });
+        glLineWidth(2.0f);
+        glDrawArrays(GL_LINES, 0, (int)lineVerts.size() / 3);
+    }
+
+    // ── 3. Draw province vertex dots ──
+    for (int pi = 0; pi < (int)provs.size(); pi++) {
+        bool isProvSelected = (pi == selProvIdx);
+        // Only show vertices for selected province + hovered province
+        if (!isProvSelected && pi != hoverProvIdx) continue;
+
         for (int vi = 0; vi < (int)provs[pi].borderVertices.size(); vi++) {
             glm::vec3 v = provs[pi].borderVertices[vi];
-            float th = map.GetBaseTerrainHeight(v.x, v.z);
-            glm::vec3 pos(v.x, th + 0.15f, v.z);
+            float th = map.GetTerrainHeight(v.x, v.z);
+            glm::vec3 pos(v.x, th + 0.2f, v.z);
 
             bool isSelected = (pi == selProvIdx && vi == selVertIdx);
-            bool isProvSelected = (pi == selProvIdx);
-            float size = isSelected ? 0.12f : 0.06f;
+            bool isHovered = (pi == hoverProvIdx && vi == hoverVertIdx);
+            float size = isSelected ? 0.12f : (isHovered ? 0.09f : 0.06f);
 
             glm::mat4 model = glm::translate(glm::mat4(1), pos);
             model = glm::scale(model, glm::vec3(size));
             m_overlayShader->SetMat4("u_Model", model);
 
             if (isSelected)
-                m_overlayShader->SetVec4("u_Color", {1.0f, 0.2f, 0.2f, 1.0f});
+                m_overlayShader->SetVec4("u_Color", { 1.0f, 0.15f, 0.1f, 1.0f });
+            else if (isHovered)
+                m_overlayShader->SetVec4("u_Color", { 1.0f, 1.0f, 0.3f, 0.9f });
             else if (isProvSelected)
-                m_overlayShader->SetVec4("u_Color", {1.0f, 0.8f, 0.2f, 0.9f});
+                m_overlayShader->SetVec4("u_Color", { 1.0f, 0.8f, 0.2f, 0.8f });
             else
-                m_overlayShader->SetVec4("u_Color", {0.3f, 0.9f, 0.3f, 0.6f});
+                m_overlayShader->SetVec4("u_Color", { 0.4f, 0.85f, 0.4f, 0.5f });
 
             glBindVertexArray(m_circleVAO);
-            glLineWidth(isSelected ? 4.0f : 2.0f);
+            glLineWidth(isSelected ? 3.5f : 2.0f);
             glDrawArrays(GL_LINE_STRIP, 0, m_circleVerts);
         }
     }
 
-    // Draw obstacle vertices too (grey)
-    for (const auto& ob : map.GetObstacles()) {
-        for (const auto& v : ob.vertices) {
+    // ── 4. Draw obstacle vertex dots ──
+    for (int oi = 0; oi < (int)obs.size(); oi++) {
+        bool isObsSelected = (oi == selObsIdx);
+        if (!isObsSelected && oi != hoverObsIdx) continue;
+
+        for (int vi = 0; vi < (int)obs[oi].vertices.size(); vi++) {
+            glm::vec3 v = obs[oi].vertices[vi];
             float th = map.GetTerrainHeight(v.x, v.z);
-            glm::vec3 pos(v.x, th + 0.15f, v.z);
+            glm::vec3 pos(v.x, th + 0.2f, v.z);
+
+            bool isSelected = (oi == selObsIdx && vi == selObsVertIdx);
+            bool isHovered = (oi == hoverObsIdx && vi == hoverObsVertIdx);
+            float size = isSelected ? 0.10f : 0.06f;
+
             glm::mat4 model = glm::translate(glm::mat4(1), pos);
-            model = glm::scale(model, glm::vec3(0.05f));
+            model = glm::scale(model, glm::vec3(size));
             m_overlayShader->SetMat4("u_Model", model);
-            m_overlayShader->SetVec4("u_Color", {0.7f, 0.7f, 0.7f, 0.5f});
+
+            if (isSelected)
+                m_overlayShader->SetVec4("u_Color", { 1.0f, 0.4f, 0.1f, 1.0f });
+            else if (isHovered)
+                m_overlayShader->SetVec4("u_Color", { 1.0f, 0.7f, 0.3f, 0.8f });
+            else
+                m_overlayShader->SetVec4("u_Color", { 0.7f, 0.7f, 0.7f, 0.5f });
+
             glBindVertexArray(m_circleVAO);
-            glLineWidth(1.5f);
+            glLineWidth(isSelected ? 3.0f : 1.5f);
             glDrawArrays(GL_LINE_STRIP, 0, m_circleVerts);
         }
+    }
+
+    // ── 5. Draw city position markers ──
+    for (int pi = 0; pi < (int)provs.size(); pi++) {
+        auto& p = provs[pi];
+        float th = map.GetTerrainHeight(p.cityPos.x, p.cityPos.z);
+        glm::vec3 pos(p.cityPos.x, th + 0.2f, p.cityPos.z);
+
+        float size = (pi == selProvIdx) ? 0.15f : 0.08f;
+        glm::mat4 model = glm::translate(glm::mat4(1), pos);
+        model = glm::scale(model, glm::vec3(size));
+        m_overlayShader->SetMat4("u_Model", model);
+
+        glm::vec4 cityCol = (pi == selProvIdx) ?
+            glm::vec4(0.2f, 0.8f, 1.0f, 0.9f) : glm::vec4(0.2f, 0.6f, 0.8f, 0.3f);
+        m_overlayShader->SetVec4("u_Color", cityCol);
+
+        glBindVertexArray(m_circleVAO);
+        glLineWidth(2.0f);
+        glDrawArrays(GL_LINE_STRIP, 0, m_circleVerts);
     }
 
     glBindVertexArray(0);
     glLineWidth(1);
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_STENCIL_TEST);
+}
+
+void Renderer::RenderEditorHUD(const std::string& toolName, const std::string& selInfo,
+    bool geometryDirty, int provinceCount, int obstacleCount)
+{
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+
+    float sw = (float)m_width, sh = (float)m_height;
+
+    // ── Top-left: Editor toolbar panel ──
+    float panW = 280, panH = 110;
+    DrawScreenQuad(0, 36, panW, panH, { 0.08f, 0.06f, 0.12f, 0.92f });
+    // Accent stripe
+    DrawScreenQuad(0, 36, 3, panH, { 0.9f, 0.7f, 0.2f, 1.0f });
+
+    DrawScreenText("MAP EDITOR", 10, 40, 1.3f, { 1.0f, 0.9f, 0.4f, 1.0f });
+
+    // Tool indicator
+    DrawScreenText("Tool: " + toolName, 10, 56, 1.1f, { 0.85f, 0.85f, 0.75f, 0.95f });
+
+    // Selection info
+    DrawScreenText("Sel: " + selInfo, 10, 70, 1.0f, { 0.7f, 0.7f, 0.6f, 0.85f });
+
+    // Stats
+    std::string stats = std::to_string(provinceCount) + " provinces, " + std::to_string(obstacleCount) + " obstacles";
+    DrawScreenText(stats, 10, 84, 0.9f, { 0.55f, 0.55f, 0.5f, 0.7f });
+
+    // Dirty indicator
+    if (geometryDirty) {
+        DrawScreenText("* UNSAVED CHANGES *", 10, 98, 0.9f, { 1.0f, 0.4f, 0.3f, 0.9f });
+    }
+
+    // ── Bottom-left: Keybinds ──
+    float helpY = sh - 90;
+    float helpW = 320, helpH = 86;
+    DrawScreenQuad(0, helpY, helpW, helpH, { 0.08f, 0.06f, 0.12f, 0.85f });
+    DrawScreenQuad(0, helpY, 3, helpH, { 0.4f, 0.6f, 0.9f, 0.8f });
+
+    DrawScreenText("1:Select  2:Move  3:Add  4:Delete  5:City", 8, helpY + 4, 0.85f,
+        { 0.75f, 0.8f, 0.9f, 0.9f });
+    DrawScreenText("LClick:Pick  Drag:Move  RClick:Delete", 8, helpY + 18, 0.85f,
+        { 0.65f, 0.7f, 0.75f, 0.8f });
+    DrawScreenText("F5:Save  F8:Load  R:Rebuild  E:Exit", 8, helpY + 32, 0.85f,
+        { 0.65f, 0.7f, 0.75f, 0.8f });
+    DrawScreenText("Arrow keys:Pan  Scroll:Zoom", 8, helpY + 46, 0.85f,
+        { 0.55f, 0.6f, 0.65f, 0.7f });
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_STENCIL_TEST);
 }

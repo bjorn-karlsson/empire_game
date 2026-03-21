@@ -1,8 +1,11 @@
 // ═══════════════════════════════════════════════════════════════
 // Game.cpp — Main game loop, input, state machine, editor
 // ═══════════════════════════════════════════════════════════════
+
+#include <glad/glad.h>
 #include "core/Game.h"
 #include "core/InputManager.h"
+
 #include "rendering/Renderer.h"
 #include "rendering/Camera.h"
 #include "campaign/CampaignMap.h"
@@ -18,7 +21,6 @@ static Game* g_gameInstance = nullptr;
 Game::Game() = default;
 Game::~Game() { Shutdown(); }
 
-// ─── Initialization ───────────────────────────────────────────
 bool Game::Init(int width, int height, const std::string& title)
 {
     Logger::Info("Initializing game: %s (%dx%d)", title.c_str(), width, height);
@@ -43,7 +45,6 @@ bool Game::Init(int width, int height, const std::string& title)
     m_windowWidth = width; m_windowHeight = height;
     glfwGetFramebufferSize(m_window, &m_windowWidth, &m_windowHeight);
 
-    // --- Create subsystems ---
     g_gameInstance = this;
 
     m_input = std::make_unique<InputManager>(m_window);
@@ -53,7 +54,6 @@ bool Game::Init(int width, int height, const std::string& title)
     m_battleScene = std::make_unique<BattleScene>();
     m_ui = std::make_unique<UIManager>();
 
-    // --- Initialize subsystems ---
     if (!m_renderer->Init()) {
         Logger::Error("Failed to initialize renderer");
         return false;
@@ -63,17 +63,13 @@ bool Game::Init(int width, int height, const std::string& title)
     if (!MapSerializer::LoadFromFile(*m_campaignMap, "maps/europe_1700.json")) {
         Logger::Warning("No map file found — using generated test map");
         m_campaignMap->GenerateTestMap();
-        // Export the generated map so we have a JSON to edit
         MapSerializer::ExportCurrentMap(*m_campaignMap, "maps/europe_1700.json");
     }
 
     m_turnManager->Init(m_campaignMap.get());
     m_ui->Init(width, height);
-
-    // Build GPU geometry for the campaign map
     m_renderer->BuildMapGeometry(*m_campaignMap);
 
-    // Start on campaign map
     m_state = GameState::CAMPAIGN_MAP;
     m_running = true;
 
@@ -81,7 +77,6 @@ bool Game::Init(int width, int height, const std::string& title)
     return true;
 }
 
-// ─── Main Game Loop ───────────────────────────────────────────
 void Game::Run()
 {
     Logger::Info("Entering main game loop...");
@@ -92,7 +87,6 @@ void Game::Run()
         m_lastFrameTime = currentTime;
         if (deltaTime > 0.1f) deltaTime = 0.1f;
 
-        // Sync window dimensions each frame
         int fw, fh;
         glfwGetFramebufferSize(m_window, &fw, &fh);
         if (fw > 0 && fh > 0 && (fw != m_windowWidth || fh != m_windowHeight)) {
@@ -109,12 +103,11 @@ void Game::Run()
     }
 }
 
-// ─── Input ────────────────────────────────────────────────────
 void Game::ProcessInput()
 {
     m_input->Update();
 
-    // Global keybinds
+    // ── Global keybinds ──
     if (m_input->IsKeyPressed(GLFW_KEY_ESCAPE)) {
         if (m_campaignMap->IsExchangeOpen()) {
             m_campaignMap->CancelExchange();
@@ -131,110 +124,111 @@ void Game::ProcessInput()
         }
     }
 
-    // Debug: quick exit
     if (m_input->IsKeyDown(GLFW_KEY_LEFT_ALT) && m_input->IsKeyPressed(GLFW_KEY_F4)) {
         m_running = false;
     }
 
-    // Toggle editor with E key
+    // Toggle editor with E key (only when idle, no exchange open)
     if (m_input->IsKeyPressed(GLFW_KEY_E) && m_state == GameState::CAMPAIGN_MAP
         && m_turnPhase == TurnExecPhase::IDLE && !m_campaignMap->IsExchangeOpen()) {
         m_editor.Toggle();
         Logger::Info("Editor: %s", m_editor.isActive ? "ON" : "OFF");
     }
 
-    // Editor key handling (1/2/3 tools, S save, L load, R rebuild)
+    // ── Editor key handling ──
     if (m_editor.isActive && m_state == GameState::CAMPAIGN_MAP) {
         if (m_input->IsKeyPressed(GLFW_KEY_1)) m_editor.HandleKeyPress(GLFW_KEY_1, *m_campaignMap, *m_renderer);
         if (m_input->IsKeyPressed(GLFW_KEY_2)) m_editor.HandleKeyPress(GLFW_KEY_2, *m_campaignMap, *m_renderer);
         if (m_input->IsKeyPressed(GLFW_KEY_3)) m_editor.HandleKeyPress(GLFW_KEY_3, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_S)) m_editor.HandleKeyPress(GLFW_KEY_S, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_L)) m_editor.HandleKeyPress(GLFW_KEY_L, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_4)) m_editor.HandleKeyPress(GLFW_KEY_4, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_5)) m_editor.HandleKeyPress(GLFW_KEY_5, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_F5)) m_editor.HandleKeyPress(GLFW_KEY_F5, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_F8)) m_editor.HandleKeyPress(GLFW_KEY_F8, *m_campaignMap, *m_renderer);
         if (m_input->IsKeyPressed(GLFW_KEY_R)) m_editor.HandleKeyPress(GLFW_KEY_R, *m_campaignMap, *m_renderer);
     }
 
-    // ─── Camera controls (only on campaign map) ──────────────
+    // ─── Camera + game input (campaign map only) ──────────────
     if (m_state == GameState::CAMPAIGN_MAP) {
         Camera* cam = m_renderer->GetCamera();
         if (!cam) return;
 
-        // Block most input during turn execution
         bool executing = (m_turnPhase != TurnExecPhase::IDLE);
-
         float dt = 0.016f;
 
-        // WASD pan (blocked during execution)
+        // Camera pan — arrow keys always, WASD only when editor is off
         if (!executing) {
             float panX = 0.0f, panZ = 0.0f;
-            if (m_input->IsKeyDown(GLFW_KEY_W) || m_input->IsKeyDown(GLFW_KEY_UP))    panZ -= dt;
-            if (m_input->IsKeyDown(GLFW_KEY_S) || m_input->IsKeyDown(GLFW_KEY_DOWN))  panZ += dt;
-            if (m_input->IsKeyDown(GLFW_KEY_A) || m_input->IsKeyDown(GLFW_KEY_LEFT))  panX -= dt;
-            if (m_input->IsKeyDown(GLFW_KEY_D) || m_input->IsKeyDown(GLFW_KEY_RIGHT)) panX += dt;
-            // Don't pan with S key when editor is active (S = save)
-            if (m_editor.isActive) {
-                panZ = 0; panX = 0;
-                if (m_input->IsKeyDown(GLFW_KEY_W) || m_input->IsKeyDown(GLFW_KEY_UP))    panZ -= dt;
-                if (m_input->IsKeyDown(GLFW_KEY_DOWN))  panZ += dt;
-                if (m_input->IsKeyDown(GLFW_KEY_LEFT))  panX -= dt;
-                if (m_input->IsKeyDown(GLFW_KEY_RIGHT)) panX += dt;
+            if (m_input->IsKeyDown(GLFW_KEY_UP))    panZ -= dt;
+            if (m_input->IsKeyDown(GLFW_KEY_DOWN))  panZ += dt;
+            if (m_input->IsKeyDown(GLFW_KEY_LEFT))  panX -= dt;
+            if (m_input->IsKeyDown(GLFW_KEY_RIGHT)) panX += dt;
+            if (!m_editor.isActive) {
+                if (m_input->IsKeyDown(GLFW_KEY_W)) panZ -= dt;
+                if (m_input->IsKeyDown(GLFW_KEY_S)) panZ += dt;
+                if (m_input->IsKeyDown(GLFW_KEY_A)) panX -= dt;
+                if (m_input->IsKeyDown(GLFW_KEY_D)) panX += dt;
             }
             if (panX != 0.0f || panZ != 0.0f)
                 cam->Pan(panX, panZ);
         }
 
-        // Middle mouse drag → pan (always allowed)
+        // Middle mouse drag pan
         if (m_input->IsMouseButtonDown(2)) {
             glm::vec2 delta = m_input->GetMouseDelta();
             cam->Pan(-delta.x * dt * 0.3f, -delta.y * dt * 0.3f);
         }
 
-        // Scroll wheel → zoom (always allowed)
+        // Scroll zoom
         float scroll = m_input->GetScrollDelta();
-        if (scroll != 0.0f)
-            cam->Zoom(scroll);
+        if (scroll != 0.0f) cam->Zoom(scroll);
 
-        // ── EDITOR MODE: intercept mouse input ──
+        // ══════════════════════════════════════════════════════
+        // EDITOR MODE MOUSE INPUT
+        // ══════════════════════════════════════════════════════
         if (m_editor.isActive && !executing) {
+            glm::vec2 mousePos = m_input->GetMousePos();
+            glm::vec3 worldPos = cam->ScreenToWorldPlane(
+                mousePos.x, mousePos.y, (float)m_windowWidth, (float)m_windowHeight);
+
+            // Hover tracking every frame
+            m_editor.HandleMouseMove(worldPos, *m_campaignMap);
+
             // Left click
             if (m_input->IsMouseButtonPressed(0)) {
-                glm::vec2 mousePos = m_input->GetMousePos();
-                glm::vec3 worldPos = cam->ScreenToWorldPlane(
-                    mousePos.x, mousePos.y,
-                    (float)m_windowWidth, (float)m_windowHeight);
                 m_editor.HandleLeftClick(worldPos, *m_campaignMap);
             }
 
-            // Left release — finish drag, rebuild geometry
-            if (m_input->IsMouseButtonReleased(0) && m_editor.isDragging) {
-                m_editor.HandleLeftRelease(*m_campaignMap);
-                m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
-            }
-
             // Drag while held
-            if (m_input->IsMouseButtonDown(0) && m_editor.isDragging) {
-                glm::vec2 mousePos = m_input->GetMousePos();
-                glm::vec3 worldPos = cam->ScreenToWorldPlane(
-                    mousePos.x, mousePos.y,
-                    (float)m_windowWidth, (float)m_windowHeight);
+            if (m_input->IsMouseButtonDown(0) &&
+                (m_editor.isDragging || m_editor.isDraggingObstacle || m_editor.isDraggingCity)) {
                 m_editor.HandleDrag(worldPos, *m_campaignMap);
             }
 
-            // Right click (delete vertex in delete mode)
-            if (m_input->IsMouseButtonPressed(1)) {
-                glm::vec2 mousePos = m_input->GetMousePos();
-                glm::vec3 worldPos = cam->ScreenToWorldPlane(
-                    mousePos.x, mousePos.y,
-                    (float)m_windowWidth, (float)m_windowHeight);
-                m_editor.HandleRightClick(worldPos, *m_campaignMap);
-                m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
+            // Left release — finish drag, rebuild
+            if (m_input->IsMouseButtonReleased(0)) {
+                if (m_editor.isDragging || m_editor.isDraggingObstacle || m_editor.isDraggingCity) {
+                    m_editor.HandleLeftRelease(*m_campaignMap);
+                    m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
+                }
+                if (m_editor.geometryDirty) {
+                    m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
+                }
             }
 
-            return; // Don't process normal game clicks while in editor
+            // Right click (delete vertex)
+            if (m_input->IsMouseButtonPressed(1)) {
+                m_editor.HandleRightClick(worldPos, *m_campaignMap);
+                if (m_editor.geometryDirty) {
+                    m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
+                }
+            }
+
+            return; // Don't process normal game clicks in editor
         }
 
-        // ── NORMAL GAME MODE ──
-
-        // Left click → SELECT objects (or exchange modal interaction)
+        // ══════════════════════════════════════════════════════
+        // NORMAL GAME MOUSE INPUT
+        // ══════════════════════════════════════════════════════
         if (m_input->IsMouseButtonPressed(0) && !executing) {
             glm::vec2 mousePos = m_input->GetMousePos();
             if (m_campaignMap->IsExchangeOpen()) {
@@ -250,7 +244,6 @@ void Game::ProcessInput()
             }
         }
 
-        // Right click → ISSUE MOVE ORDER / MERGE (not during exchange or execution)
         if (m_input->IsMouseButtonPressed(1) && !m_campaignMap->IsExchangeOpen() && !executing) {
             glm::vec2 mousePos = m_input->GetMousePos();
             glm::vec3 worldPos = cam->ScreenToWorldPlane(
@@ -261,18 +254,15 @@ void Game::ProcessInput()
     }
 }
 
-// ─── Update ───────────────────────────────────────────────────
 void Game::Update(float deltaTime)
 {
     Camera* cam = m_renderer->GetCamera();
     if (cam) {
         cam->Update(deltaTime);
-        // Prevent camera from going underground
         float minDist = 3.0f;
         if (cam->GetDistance() < minDist) cam->SetDistance(minDist);
     }
 
-    // Safety timer to prevent freeze during turn execution
     static float safetyTimer = 0;
     if (m_turnPhase != TurnExecPhase::IDLE) {
         safetyTimer += deltaTime;
@@ -291,12 +281,10 @@ void Game::Update(float deltaTime)
     switch (m_state) {
     case GameState::CAMPAIGN_MAP:
     {
-        // ── IDLE: normal gameplay ──
         if (m_turnPhase == TurnExecPhase::IDLE) {
             m_campaignMap->Update(deltaTime, *m_input);
             m_ui->Update(deltaTime, *m_input);
 
-            // End Turn trigger (don't trigger during editor mode)
             if (!m_editor.isActive &&
                 (m_ui->IsEndTurnButtonClicked() || m_input->IsKeyPressed(GLFW_KEY_SPACE) ||
                     m_input->IsKeyPressed(GLFW_KEY_ENTER))) {
@@ -307,14 +295,11 @@ void Game::Update(float deltaTime)
                 m_turnExecTimer = 0.1f;
                 if (cam) m_savedCamDist = cam->GetDistance();
                 m_cameraLocked = true;
-
-                // Prepare AI faction order
                 m_aiFactionOrder = m_campaignMap->GetAIFactionIds();
                 m_execFactionIdx = 0;
                 m_currentAIFaction.clear();
             }
         }
-        // ── PLAYER MOVES: execute player's scheduled armies one by one ──
         else if (m_turnPhase == TurnExecPhase::PLAYER_MOVES) {
             m_campaignMap->Update(deltaTime, *m_input);
             if (m_followArmyId >= 0) {
@@ -338,7 +323,6 @@ void Game::Update(float deltaTime)
                         if (a && cam) { cam->SetTarget(a->worldPosition + glm::vec3(0, 0, 1)); cam->SetDistance(12); }
                     }
                     else {
-                        // Player done → start first AI faction
                         m_execFactionIdx = 0;
                         m_turnPhase = TurnExecPhase::AI_FACTION;
                         m_turnExecTimer = 0.3f;
@@ -348,12 +332,9 @@ void Game::Update(float deltaTime)
                 }
             }
         }
-        // ── AI FACTION: process one faction at a time, sequentially ──
         else if (m_turnPhase == TurnExecPhase::AI_FACTION) {
             m_campaignMap->Update(deltaTime, *m_input);
-
             if (m_followArmyId >= 0) {
-                // Watching an AI army move
                 const Army* fa = m_campaignMap->GetArmy(m_followArmyId);
                 if (fa && fa->isMoving) {
                     if (cam) cam->SetTarget(fa->worldPosition + glm::vec3(0, 0, 1));
@@ -366,8 +347,6 @@ void Game::Update(float deltaTime)
             else {
                 m_turnExecTimer -= deltaTime;
                 if (m_turnExecTimer <= 0) {
-
-                    // If we haven't issued orders for the current faction yet, do it now
                     if (m_currentAIFaction.empty() && m_execFactionIdx < (int)m_aiFactionOrder.size()) {
                         m_currentAIFaction = m_aiFactionOrder[m_execFactionIdx];
                         const Faction* f = m_campaignMap->GetFaction(m_currentAIFaction);
@@ -375,9 +354,7 @@ void Game::Update(float deltaTime)
                         m_campaignMap->RunAIForFaction(m_currentAIFaction);
                         m_turnExecTimer = 0.2f;
                     }
-                    // Try to start/follow the next army for this faction
                     else if (!m_currentAIFaction.empty()) {
-                        // Check if any army of this faction is still moving
                         bool anyMoving = false;
                         for (const auto& a : m_campaignMap->GetArmies()) {
                             if (a.factionId == m_currentAIFaction && a.isMoving) {
@@ -386,9 +363,7 @@ void Game::Update(float deltaTime)
                                 anyMoving = true; break;
                             }
                         }
-
                         if (!anyMoving) {
-                            // Try starting next scheduled army for this faction
                             int nextId = m_campaignMap->StartNextScheduledArmy(m_currentAIFaction);
                             if (nextId >= 0) {
                                 m_followArmyId = nextId;
@@ -396,13 +371,10 @@ void Game::Update(float deltaTime)
                                 if (a && cam) { cam->SetTarget(a->worldPosition + glm::vec3(0, 0, 1)); cam->SetDistance(12); }
                             }
                             else {
-                                // This faction is done → advance to next faction
                                 Logger::Info("--- %s's turn complete ---", m_currentAIFaction.c_str());
                                 m_execFactionIdx++;
                                 m_currentAIFaction.clear();
                                 m_turnExecTimer = 0.4f;
-
-                                // Check if ALL factions are done
                                 if (m_execFactionIdx >= (int)m_aiFactionOrder.size()) {
                                     m_campaignMap->ProcessTurn();
                                     m_turnPhase = TurnExecPhase::IDLE;
@@ -417,7 +389,6 @@ void Game::Update(float deltaTime)
             }
         }
 
-        // Check for pending battles (any phase)
         if (m_campaignMap->HasPendingBattle()) {
             auto battleData = m_campaignMap->GetPendingBattle();
             m_battleScene->Setup(battleData, *m_campaignMap);
@@ -437,8 +408,6 @@ void Game::Update(float deltaTime)
         if (m_battleScene->IsFinished()) {
             m_campaignMap->ApplyBattleResult(m_battleScene->GetResult());
             m_state = GameState::CAMPAIGN_MAP;
-
-            // Follow the retreating army (if any) before resuming AI
             m_followArmyId = -1;
             for (const auto& a : m_campaignMap->GetArmies()) {
                 if (a.isMoving) {
@@ -457,7 +426,6 @@ void Game::Update(float deltaTime)
     }
 }
 
-// ─── Render ───────────────────────────────────────────────────
 void Game::Render()
 {
     m_renderer->BeginFrame();
@@ -466,12 +434,18 @@ void Game::Render()
     case GameState::CAMPAIGN_MAP:
         m_renderer->RenderCampaignMap(*m_campaignMap);
 
-        // Editor overlay: vertex dots + status text
         if (m_editor.isActive) {
             m_renderer->RenderEditorOverlay(*m_campaignMap,
-                m_editor.selectedProvinceIdx, m_editor.selectedVertexIdx);
-            m_renderer->DrawScreenText(m_editor.GetStatusText(),
-                10, 40, 1.0f, { 1.0f, 1.0f, 0.5f, 1.0f });
+                m_editor.selectedProvinceIdx, m_editor.selectedVertexIdx,
+                m_editor.selectedObstacleIdx, m_editor.selectedObsVertexIdx,
+                m_editor.hoverProvinceIdx, m_editor.hoverVertexIdx,
+                m_editor.hoverObstacleIdx, m_editor.hoverObsVertexIdx);
+            m_renderer->RenderEditorHUD(
+                m_editor.GetToolName(),
+                m_editor.GetSelectionInfo(*m_campaignMap),
+                m_editor.geometryDirty,
+                (int)m_campaignMap->GetProvinces().size(),
+                (int)m_campaignMap->GetObstacles().size());
         }
 
         m_ui->Render(*m_renderer);
@@ -497,11 +471,9 @@ void Game::Render()
     m_renderer->EndFrame();
 }
 
-// ─── Shutdown ─────────────────────────────────────────────────
 void Game::Shutdown()
 {
     Logger::Info("Shutting down...");
-
     m_ui.reset();
     m_battleScene.reset();
     m_turnManager.reset();
@@ -516,7 +488,6 @@ void Game::Shutdown()
     glfwTerminate();
 }
 
-// ─── State Management ─────────────────────────────────────────
 void Game::SetState(GameState newState)
 {
     Logger::Info("Game state: %d -> %d", (int)m_state, (int)newState);

@@ -104,6 +104,8 @@ void Game::ProcessInput()
 {
     m_input->Update();
 
+    bool ctrlHeld = m_input->IsKeyDown(GLFW_KEY_LEFT_CONTROL) || m_input->IsKeyDown(GLFW_KEY_RIGHT_CONTROL);
+
     // ── Global keybinds ──
     if (m_input->IsKeyPressed(GLFW_KEY_ESCAPE)) {
         if (m_campaignMap->IsExchangeOpen()) {
@@ -126,7 +128,7 @@ void Game::ProcessInput()
     }
 
     // Toggle editor
-    if (m_input->IsKeyPressed(GLFW_KEY_E) && m_state == GameState::CAMPAIGN_MAP
+    if (m_input->IsKeyPressed(GLFW_KEY_E) && !ctrlHeld && m_state == GameState::CAMPAIGN_MAP
         && m_turnPhase == TurnExecPhase::IDLE && !m_campaignMap->IsExchangeOpen()) {
         m_editor.Toggle();
         Logger::Info("Editor: %s", m_editor.isActive ? "ON" : "OFF");
@@ -134,14 +136,17 @@ void Game::ProcessInput()
 
     // Editor keys
     if (m_editor.isActive && m_state == GameState::CAMPAIGN_MAP) {
-        if (m_input->IsKeyPressed(GLFW_KEY_1)) m_editor.HandleKeyPress(GLFW_KEY_1, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_2)) m_editor.HandleKeyPress(GLFW_KEY_2, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_3)) m_editor.HandleKeyPress(GLFW_KEY_3, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_4)) m_editor.HandleKeyPress(GLFW_KEY_4, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_5)) m_editor.HandleKeyPress(GLFW_KEY_5, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_F5)) m_editor.HandleKeyPress(GLFW_KEY_F5, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_F8)) m_editor.HandleKeyPress(GLFW_KEY_F8, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_R)) m_editor.HandleKeyPress(GLFW_KEY_R, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_1)) m_editor.HandleKeyPress(GLFW_KEY_1, false, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_2)) m_editor.HandleKeyPress(GLFW_KEY_2, false, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_3)) m_editor.HandleKeyPress(GLFW_KEY_3, false, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_DELETE)) m_editor.HandleKeyPress(GLFW_KEY_DELETE, false, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_R) && !ctrlHeld) m_editor.HandleKeyPress(GLFW_KEY_R, false, *m_campaignMap, *m_renderer);
+
+        // Ctrl combos
+        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_Z)) m_editor.HandleKeyPress(GLFW_KEY_Z, true, *m_campaignMap, *m_renderer);
+        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_Y)) m_editor.HandleKeyPress(GLFW_KEY_Y, true, *m_campaignMap, *m_renderer);
+        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_S)) m_editor.HandleKeyPress(GLFW_KEY_S, true, *m_campaignMap, *m_renderer);
+        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_L)) m_editor.HandleKeyPress(GLFW_KEY_L, true, *m_campaignMap, *m_renderer);
     }
 
     // ─── Camera + game input ──────────────
@@ -159,7 +164,7 @@ void Game::ProcessInput()
             if (m_input->IsKeyDown(GLFW_KEY_DOWN))  panZ += dt;
             if (m_input->IsKeyDown(GLFW_KEY_LEFT))  panX -= dt;
             if (m_input->IsKeyDown(GLFW_KEY_RIGHT)) panX += dt;
-            if (!m_editor.isActive) {
+            if (!ctrlHeld) {
                 if (m_input->IsKeyDown(GLFW_KEY_W)) panZ -= dt;
                 if (m_input->IsKeyDown(GLFW_KEY_S)) panZ += dt;
                 if (m_input->IsKeyDown(GLFW_KEY_A)) panX -= dt;
@@ -169,11 +174,13 @@ void Game::ProcessInput()
                 cam->Pan(panX, panZ);
         }
 
+        // Middle mouse pan (always)
         if (m_input->IsMouseButtonDown(2)) {
             glm::vec2 delta = m_input->GetMouseDelta();
             cam->Pan(-delta.x * dt * 0.3f, -delta.y * dt * 0.3f);
         }
 
+        // Scroll zoom
         float scroll = m_input->GetScrollDelta();
         if (scroll != 0.0f) cam->Zoom(scroll);
 
@@ -181,7 +188,6 @@ void Game::ProcessInput()
         // EDITOR MODE
         // ══════════════════════════════════════════════════════
         if (m_editor.isActive && !executing) {
-            // Feed VP matrix + screen size to editor for screen-space picking
             m_editor.SetScreenInfo(cam->GetViewProjectionMatrix(),
                 (float)m_windowWidth, (float)m_windowHeight);
 
@@ -189,40 +195,37 @@ void Game::ProcessInput()
             glm::vec3 worldPos = cam->ScreenToWorldPlane(
                 mousePos.x, mousePos.y, (float)m_windowWidth, (float)m_windowHeight);
 
-            // Hover (every frame)
+            // Hover every frame
             m_editor.HandleMouseMove(mousePos, *m_campaignMap);
 
-            // Left click
+            // LEFT CLICK = select only
             if (m_input->IsMouseButtonPressed(0)) {
                 m_editor.HandleLeftClick(worldPos, mousePos, *m_campaignMap);
-            }
-
-            // Drag
-            if (m_input->IsMouseButtonDown(0) &&
-                (m_editor.isDragging || m_editor.isDraggingObstacle || m_editor.isDraggingCity)) {
-                m_editor.HandleDrag(worldPos, *m_campaignMap);
-            }
-
-            // Release
-            if (m_input->IsMouseButtonReleased(0)) {
-                if (m_editor.isDragging || m_editor.isDraggingObstacle || m_editor.isDraggingCity) {
-                    m_editor.HandleLeftRelease(*m_campaignMap);
-                    m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
-                }
                 if (m_editor.geometryDirty) {
                     m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
                 }
             }
 
-            // Right click
+            // RIGHT PRESS = start drag (if vertex selected)
             if (m_input->IsMouseButtonPressed(1)) {
-                m_editor.HandleRightClick(worldPos, mousePos, *m_campaignMap);
-                if (m_editor.geometryDirty) {
+                m_editor.HandleRightPress(worldPos, mousePos, *m_campaignMap);
+            }
+
+            // RIGHT HELD = drag
+            if (m_input->IsMouseButtonDown(1) &&
+                (m_editor.isDragging || m_editor.isDraggingCity)) {
+                m_editor.HandleRightDrag(worldPos, *m_campaignMap);
+            }
+
+            // RIGHT RELEASE = finish drag, rebuild
+            if (m_input->IsMouseButtonReleased(1)) {
+                if (m_editor.isDragging || m_editor.isDraggingCity) {
+                    m_editor.HandleRightRelease(*m_campaignMap);
                     m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
                 }
             }
 
-            return;
+            return; // Don't process normal game clicks
         }
 
         // ══════════════════════════════════════════════════════

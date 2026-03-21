@@ -144,30 +144,48 @@ void Renderer::BuildForeignGPU(const ForeignTerritory& ft) {
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1);
     glBindVertexArray(0); m_foreignGPUs.push_back(gpu);
 }
-void Renderer::BuildFontTexture(){
-    // Create 128x64 texture atlas: 16 chars per row, 6 rows, each char 8x8 pixels
-    const int atlasW=128,atlasH=64;
-    std::vector<unsigned char>pixels(atlasW*atlasH,0);
-    for(int ch=0;ch<96;ch++){
-        int cx=(ch%16)*8, cy=(ch/16)*8;
-        for(int row=0;row<8;row++){
-            uint8_t bits=FONT_8X8[ch][row];
-            for(int col=0;col<8;col++){
-                if(bits&(0x80>>col))
-                    pixels[(cy+row)*atlasW+(cx+col)]=255;
+void Renderer::BuildFontTexture() {
+    // Upscale 8x8 font to 16x16 with 1px padding for clean filtering
+    const int SCALE = 2;
+    const int GLYPH = 8 * SCALE; // 16px per glyph
+    const int PAD = 1;
+    const int CELL = GLYPH + PAD * 2; // 18px cell
+    const int COLS = 16, ROWS = 6;
+    const int atlasW = COLS * CELL; // 288
+    const int atlasH = ROWS * CELL; // 108
+    std::vector<unsigned char> pixels(atlasW * atlasH, 0);
+
+    for (int ch = 0; ch < 96; ch++) {
+        int cx = (ch % COLS) * CELL + PAD;
+        int cy = (ch / COLS) * CELL + PAD;
+        for (int row = 0; row < 8; row++) {
+            uint8_t bits = FONT_8X8[ch][row];
+            for (int col = 0; col < 8; col++) {
+                if (bits & (0x80 >> col)) {
+                    // Fill a SCALE x SCALE block
+                    for (int sy = 0; sy < SCALE; sy++)
+                        for (int sx = 0; sx < SCALE; sx++)
+                            pixels[(cy + row * SCALE + sy) * atlasW + (cx + col * SCALE + sx)] = 255;
+                }
             }
         }
     }
-    glGenTextures(1,&m_fontTexture);
-    glBindTexture(GL_TEXTURE_2D,m_fontTexture);
-    glTexImage2D(GL_TEXTURE_2D,0,GL_RED,atlasW,atlasH,0,GL_RED,GL_UNSIGNED_BYTE,pixels.data());
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
-    Logger::Info("Font texture atlas created (%dx%d)",atlasW,atlasH);
-}
 
+    glGenTextures(1, &m_fontTexture);
+    glBindTexture(GL_TEXTURE_2D, m_fontTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, atlasW, atlasH, 0, GL_RED, GL_UNSIGNED_BYTE, pixels.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // Store atlas dimensions for UV calculation
+    m_fontAtlasW = atlasW;
+    m_fontAtlasH = atlasH;
+    m_fontCellSize = CELL;
+    m_fontGlyphSize = GLYPH;
+    Logger::Info("Font texture atlas created (%dx%d, %dpx glyphs)", atlasW, atlasH, GLYPH);
+}
 void Renderer::BuildWaterPlane(){
     float s=40;std::vector<float>wv;int gs=40;float st=s*2.f/gs;
     for(int gz=0;gz<gs;gz++)for(int gx=0;gx<gs;gx++){
@@ -220,6 +238,7 @@ void Renderer::InitShaders() {
 layout(location=0)in vec3 aPos;
 layout(location=1)in vec2 aEdge;
 uniform mat4 u_VP;
+uniform sampler2D u_HeightMap;
 out vec3 v_W;
 out float v_E;
 
@@ -241,6 +260,9 @@ void main(){
     h += fbm(pos.xz * 4.0 + 50.0) * 0.12;
     h += noise(pos.xz * 10.0) * 0.03;
     h *= (1.0 - aEdge.x * 0.4);
+    vec2 hmUV = (pos.xz - vec2(-12.0, -12.0)) / vec2(28.0, 28.0);
+    hmUV = clamp(hmUV, 0.0, 1.0);
+    h += texture(u_HeightMap, hmUV).r;
     pos.y += h;
     v_W = pos;
     v_E = aEdge.x;
@@ -497,8 +519,15 @@ uniform vec4 u_Color;
 out vec4 FC;
 void main(){
     float a = texture(u_Font, v_UV).r;
-    if(a < 0.5) discard;
-    FC = u_Color;
+    // Smooth edge instead of hard cutoff
+    float alpha = smoothstep(0.25, 0.75, a);
+    if(alpha < 0.01) discard;
+    // Subtle dark shadow for readability
+    float shadow = texture(u_Font, v_UV + vec2(0.003, 0.005)).r;
+    float shadowA = smoothstep(0.2, 0.6, shadow) * 0.5;
+    vec3 col = mix(vec3(0.0), u_Color.rgb, alpha / max(alpha, shadowA + alpha));
+    float finalA = max(alpha, shadowA) * u_Color.a;
+    FC = vec4(u_Color.rgb, alpha * u_Color.a);
 })");
 }
 
@@ -545,6 +574,15 @@ void Renderer::RenderWater(){
 }
 
 void Renderer::RenderProvinces(const CampaignMap&map){
+    auto& hm = map.GetHeightMap();
+    if (hm.IsDirty()) const_cast<HeightMap&>(hm).UploadToGPU();
+
+    m_provinceShader->Use();
+    m_provinceShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, hm.GetTextureID());
+    m_provinceShader->SetInt("u_HeightMap", 1);
+
     m_provinceShader->Use();m_provinceShader->SetMat4("u_VP",m_camera->GetViewProjectionMatrix());
     for(const auto&p:map.GetProvinces()){auto it=m_provinceGPUs.find(p.id);if(it==m_provinceGPUs.end())continue;
         m_provinceShader->SetVec3("u_Color",p.color);glBindVertexArray(it->second.VAO);
@@ -703,42 +741,46 @@ void Renderer::RenderBorders(const CampaignMap& map) {
 }
 // ── Movement mesh: green overlay from flood-fill cells ────────
 // ── Screen-space text using bitmap font ───────────────────────
-void Renderer::DrawScreenText(const std::string&text,float x,float y,float scale,glm::vec4 color){
-    if(text.empty()||!m_fontTexture)return;
-    float charW=8*scale,charH=8*scale;
-    // Build quads: 6 verts per char (pos.xy + uv.xy)
-    std::vector<float>verts;
-    float cx=x;
-    for(char c:text){
-        int idx=c-32;
-        if(idx<0||idx>=96){cx+=charW;continue;}
-        float u0=(float)(idx%16)*8.0f/128.0f;
-        float v0=(float)(idx/16)*8.0f/64.0f;
-        float u1=u0+8.0f/128.0f;
-        float v1=v0+8.0f/64.0f;
-        // 2 triangles: TL,TR,BL + TR,BR,BL (in screen coords via shader)
-        // We pass raw pixel coords; shader maps via u_Rect={0,0,1,1}
-        verts.insert(verts.end(),{cx,y,u0,v0, cx+charW,y,u1,v0, cx,y+charH,u0,v1,
-            cx+charW,y,u1,v0, cx+charW,y+charH,u1,v1, cx,y+charH,u0,v1});
-        cx+=charW;
-    }
-    if(verts.empty())return;
+void Renderer::DrawScreenText(const std::string& text, float x, float y, float scale, glm::vec4 color) {
+    if (text.empty() || !m_fontTexture) return;
+    float charW = 8 * scale, charH = 8 * scale; // screen size stays same
+    float cellU = (float)m_fontCellSize / m_fontAtlasW;
+    float cellV = (float)m_fontCellSize / m_fontAtlasH;
+    float padU = 1.0f / m_fontAtlasW; // 1px padding offset
+    float padV = 1.0f / m_fontAtlasH;
+    float glyphU = (float)m_fontGlyphSize / m_fontAtlasW;
+    float glyphV = (float)m_fontGlyphSize / m_fontAtlasH;
 
-    glBindVertexArray(m_textVAO);glBindBuffer(GL_ARRAY_BUFFER,m_textVBO);
-    glBufferData(GL_ARRAY_BUFFER,verts.size()*sizeof(float),verts.data(),GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,4*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,4*sizeof(float),(void*)(2*sizeof(float)));glEnableVertexAttribArray(1);
+    std::vector<float> verts;
+    float cx = x;
+    for (char c : text) {
+        int idx = c - 32;
+        if (idx < 0 || idx >= 96) { cx += charW; continue; }
+        float u0 = (float)(idx % 16) * cellU + padU;
+        float v0 = (float)(idx / 16) * cellV + padV;
+        float u1 = u0 + glyphU;
+        float v1 = v0 + glyphV;
+        verts.insert(verts.end(), {
+            cx, y, u0, v0,          cx + charW, y, u1, v0,         cx, y + charH, u0, v1,
+            cx + charW, y, u1, v0,  cx + charW, y + charH, u1, v1, cx, y + charH, u0, v1
+            });
+        cx += charW;
+    }
+    if (verts.empty()) return;
+
+    glBindVertexArray(m_textVAO); glBindBuffer(GL_ARRAY_BUFFER, m_textVBO);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float))); glEnableVertexAttribArray(1);
 
     m_textShader->Use();
-    m_textShader->SetVec4("u_Rect",{0,0,1,1}); // identity — coords already in pixels
-    m_textShader->SetVec4("u_Screen",{(float)m_width,(float)m_height,0,0});
-    m_textShader->SetVec4("u_Color",color);
-    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,m_fontTexture);
+    m_textShader->SetVec4("u_Screen", { (float)m_width, (float)m_height, 0, 0 });
+    m_textShader->SetVec4("u_Color", color);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, m_fontTexture);
 
-    glDrawArrays(GL_TRIANGLES,0,(int)verts.size()/4);
+    glDrawArrays(GL_TRIANGLES, 0, (int)verts.size() / 4);
     glBindVertexArray(0);
 }
-
 // ── World-space text (projects 3D position to screen) ─────────
 void Renderer::DrawWorldText(const std::string&text,glm::vec3 worldPos,float scale,glm::vec4 color){
     glm::mat4 vp=m_camera->GetViewProjectionMatrix();
@@ -995,152 +1037,118 @@ void Renderer::DrawScreenQuad(float x,float y,float w,float h,glm::vec4 color){
 }
 
 // ── HUD ───────────────────────────────────────────────────────
-void Renderer::RenderHUD(const CampaignMap&map){
-    glDisable(GL_DEPTH_TEST);glDisable(GL_STENCIL_TEST);
+void Renderer::RenderHUD(const CampaignMap& map) {
+    glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST);
 
-    float sw=(float)m_width, sh=(float)m_height;
+    float sw = (float)m_width, sh = (float)m_height;
 
-    // Top bar background
-    DrawScreenQuad(0,0,sw,36,{0.05f,0.05f,0.1f,0.85f});
+    // ═══════════════════════════════════════════════════════
+    // BOTTOM-RIGHT: Turn info + End Turn button (ETW style)
+    // ═══════════════════════════════════════════════════════
+    float panW = 220, panH = 80;
+    float px = sw - panW, py = sh - panH;
 
-    // Turn indicator: colored blocks for season
-    // Spring=green, Summer=yellow, Autumn=orange, Winter=white
-    glm::vec4 seasonColors[]={{0.3f,0.7f,0.3f,1},{0.9f,0.8f,0.2f,1},{0.8f,0.5f,0.2f,1},{0.8f,0.85f,0.9f,1}};
-    int season=(map.GetCurrentTurn()-1)%4;
-    DrawScreenQuad(10,6,24,24,seasonColors[season]);
+    // Background panel
+    DrawScreenQuad(px, py, panW, panH, { 0.08f, 0.06f, 0.04f, 0.9f });
+    DrawScreenQuad(px, py, panW, 3, { 0.6f, 0.5f, 0.3f, 0.8f }); // top accent
 
-    // Season + Year text
-    std::string seasonName[]={"Spring","Summer","Autumn","Winter"};
-    DrawScreenText(seasonName[season]+" "+map.GetCurrentYear(),44,10,1.5f,{0.85f,0.82f,0.7f,0.95f});
+    // Season color block
+    glm::vec4 seasonColors[] = {
+        {0.3f,0.7f,0.3f,1}, {0.9f,0.8f,0.2f,1},
+        {0.8f,0.5f,0.2f,1}, {0.8f,0.85f,0.9f,1}
+    };
+    int season = (map.GetCurrentTurn() - 1) % 4;
+    DrawScreenQuad(px + 10, py + 10, 20, 20, seasonColors[season]);
 
-    // Treasury bar (gold)
-    const Faction*player=map.GetPlayerFaction();
-    if(player){
-        float maxTreasury=20000.0f;
-        float treasuryRatio=glm::clamp((float)player->treasury/maxTreasury,0.0f,1.0f);
-        float barX=sw-310;
-        DrawScreenText("Treasury: "+std::to_string(player->treasury),barX,4,1.2f,{0.9f,0.8f,0.4f,0.95f});
-        DrawScreenQuad(barX,20,200,12,{0.15f,0.12f,0.08f,0.8f});
-        DrawScreenQuad(barX,20,200*treasuryRatio,12,{0.85f,0.7f,0.15f,0.9f});
+    // Season + Year
+    std::string seasonName[] = { "Spring", "Summer", "Autumn", "Winter" };
+    DrawScreenText(seasonName[season] + " " + map.GetCurrentYear(),
+        px + 36, py + 10, 1.6f, { 0.9f, 0.85f, 0.7f, 1.0f });
 
-        // Income indicator (green/red bar below treasury)
-        int net=player->incomePerTurn-player->expensesPerTurn;
-        float netRatio=glm::clamp(std::abs((float)net)/500.0f,0.0f,1.0f);
-        glm::vec4 netColor=net>=0?glm::vec4(0.2f,0.7f,0.2f,0.8f):glm::vec4(0.8f,0.2f,0.2f,0.8f);
-        DrawScreenQuad(barX,30,200*netRatio,4,netColor);
+    // Treasury
+    const Faction* player = map.GetPlayerFaction();
+    if (player) {
+        DrawScreenText("Treasury: " + std::to_string(player->treasury),
+            px + 10, py + 32, 1.3f, { 0.9f, 0.8f, 0.4f, 0.95f });
     }
 
-    // End Turn button (bottom right)
-    float btnW=120,btnH=32;
-    float btnX=sw-btnW-10,btnY=sh-btnH-10;
-    DrawScreenQuad(btnX,btnY,btnW,btnH,{0.15f,0.4f,0.15f,0.85f});
-    DrawScreenQuad(btnX+2,btnY+2,btnW-4,btnH-4,{0.2f,0.55f,0.2f,0.9f});
-    DrawScreenText("End Turn",btnX+20,btnY+8,1.5f,{0.95f,0.92f,0.8f,1});
+    // End Turn button
+    float btnW = panW - 20, btnH = 26;
+    float btnX = px + 10, btnY = py + panH - btnH - 6;
+    DrawScreenQuad(btnX, btnY, btnW, btnH, { 0.15f, 0.4f, 0.15f, 0.9f });
+    DrawScreenQuad(btnX + 2, btnY + 2, btnW - 4, btnH - 4, { 0.2f, 0.55f, 0.2f, 0.95f });
+    DrawScreenText("End Turn", btnX + btnW / 2 - 40, btnY + 5, 1.5f,
+        { 0.95f, 0.92f, 0.8f, 1 });
 
-    // Selected army info (bottom left panel)
-    int selArmy=map.GetSelectedArmyId();
-    if(selArmy>=0){
-        const Army*a=map.GetArmy(selArmy);
-        if(a){
-            float panelW=300,panelH=100;
-            DrawScreenQuad(0,sh-panelH,panelW,panelH,{0.05f,0.05f,0.1f,0.85f});
+    // ═══════════════════════════════════════════════════════
+    // BOTTOM-LEFT: Selected army info
+    // ═══════════════════════════════════════════════════════
+    int selArmy = map.GetSelectedArmyId();
+    if (selArmy >= 0) {
+        const Army* a = map.GetArmy(selArmy);
+        if (a) {
+            float apW = 300, apH = 100;
+            DrawScreenQuad(0, sh - apH, apW, apH, { 0.05f, 0.05f, 0.1f, 0.85f });
 
-            const Faction*f=map.GetFaction(a->factionId);
-            glm::vec3 fc=f?f->color:glm::vec3(0.5f);
-            DrawScreenQuad(0,sh-panelH,6,panelH,{fc.r,fc.g,fc.b,1});
+            const Faction* f = map.GetFaction(a->factionId);
+            glm::vec3 fc = f ? f->color : glm::vec3(0.5f);
+            DrawScreenQuad(0, sh - apH, 6, apH, { fc.r, fc.g, fc.b, 1 });
 
-            // General name + faction
-            DrawScreenText(a->generalName,14,sh-panelH+4,1.3f,{0.95f,0.9f,0.75f,1});
-            DrawScreenText(std::to_string(a->GetTotalManpower())+" men  "+
-                std::to_string((int)a->units.size())+" units",14,sh-panelH+18,1.0f,{0.75f,0.72f,0.6f,0.9f});
+            DrawScreenText(a->generalName, 14, sh - apH + 4, 1.5f, { 0.95f, 0.9f, 0.75f, 1 });
+            DrawScreenText(std::to_string(a->GetTotalManpower()) + " men  " +
+                std::to_string((int)a->units.size()) + " units",
+                14, sh - apH + 22, 1.2f, { 0.75f, 0.72f, 0.6f, 0.9f });
 
-            // Unit count bars
-            for(int i=0;i<(int)a->units.size();i++){
-                float ux=14+i*13;
-                float uy=sh-panelH+34;
-                // Bar height based on manpower ratio
-                float hpRatio=(float)a->units[i].stats.manpower/a->units[i].stats.maxManpower;
-                float barH=40*hpRatio;
-                glm::vec4 unitColor={0.5f,0.5f,0.6f,0.9f};
-                if(a->units[i].type==UnitType::LINE_INFANTRY) unitColor={0.3f,0.4f,0.8f,0.9f};
-                if(a->units[i].type==UnitType::GRENADIERS) unitColor={0.8f,0.3f,0.3f,0.9f};
-                if(a->units[i].type==UnitType::DRAGOONS||a->units[i].type==UnitType::HUSSARS) unitColor={0.3f,0.7f,0.3f,0.9f};
-                if(a->units[i].type==UnitType::CANNON_6PDR||a->units[i].type==UnitType::CANNON_12PDR) unitColor={0.7f,0.6f,0.3f,0.9f};
-
-                DrawScreenQuad(ux,uy,10,40,{0.1f,0.1f,0.15f,0.5f});
-                DrawScreenQuad(ux,uy+40-barH,10,barH,unitColor);
+            // Unit bars
+            for (int i = 0; i < (int)a->units.size(); i++) {
+                float ux = 14 + i * 13;
+                float uy = sh - apH + 40;
+                float hpRatio = (float)a->units[i].stats.manpower / a->units[i].stats.maxManpower;
+                float barH = 40 * hpRatio;
+                glm::vec4 unitColor = { 0.5f,0.5f,0.6f,0.9f };
+                if (a->units[i].type == UnitType::LINE_INFANTRY) unitColor = { 0.3f,0.4f,0.8f,0.9f };
+                if (a->units[i].type == UnitType::GRENADIERS) unitColor = { 0.8f,0.3f,0.3f,0.9f };
+                if (a->units[i].type == UnitType::DRAGOONS || a->units[i].type == UnitType::HUSSARS) unitColor = { 0.3f,0.7f,0.3f,0.9f };
+                if (a->units[i].type == UnitType::CANNON_6PDR || a->units[i].type == UnitType::CANNON_12PDR) unitColor = { 0.7f,0.6f,0.3f,0.9f };
+                DrawScreenQuad(ux, uy, 10, 40, { 0.1f,0.1f,0.15f,0.5f });
+                DrawScreenQuad(ux, uy + 40 - barH, 10, barH, unitColor);
             }
 
-            // Movement range bar
-            float moveRatio=a->movementRange/a->movementRangeMax;
-            DrawScreenQuad(14,sh-22,270,10,{0.1f,0.1f,0.15f,0.6f});
-            DrawScreenQuad(14,sh-22,270*moveRatio,10,{0.2f,0.8f,0.3f,0.9f});
-            DrawScreenText("Move",14,sh-34,0.9f,{0.6f,0.8f,0.6f,0.8f});
+            // Movement bar
+            float moveRatio = a->movementRange / a->movementRangeMax;
+            DrawScreenQuad(14, sh - 16, 270, 8, { 0.1f,0.1f,0.15f,0.6f });
+            DrawScreenQuad(14, sh - 16, 270 * moveRatio, 8, { 0.2f,0.8f,0.3f,0.9f });
         }
     }
 
-    // Selected city info (bottom left, when city selected)
-    int selProv=map.GetSelectedProvinceId();
-    if(selProv>=0&&selArmy<0){
-        const Province*p=map.GetProvince(selProv);
-        if(p){
-            float panelW=250,panelH=80;
-            DrawScreenQuad(0,sh-panelH,panelW,panelH,{0.05f,0.05f,0.1f,0.85f});
-            DrawScreenText(p->cityName,10,sh-panelH+4,1.4f,{0.95f,0.9f,0.7f,1});
-            DrawScreenText(p->name,10,sh-panelH+20,1.0f,{0.7f,0.65f,0.55f,0.85f});
+    // ═══════════════════════════════════════════════════════
+    // BOTTOM-LEFT: Selected city info (when no army selected)
+    // ═══════════════════════════════════════════════════════
+    int selProv = map.GetSelectedProvinceId();
+    if (selProv >= 0 && selArmy < 0) {
+        const Province* p = map.GetProvince(selProv);
+        if (p) {
+            float cpW = 250, cpH = 80;
+            DrawScreenQuad(0, sh - cpH, cpW, cpH, { 0.05f,0.05f,0.1f,0.85f });
+            DrawScreenText(p->cityName, 10, sh - cpH + 4, 1.6f, { 0.95f,0.9f,0.7f,1 });
+            DrawScreenText(p->name, 10, sh - cpH + 22, 1.2f, { 0.7f,0.65f,0.55f,0.85f });
 
-            // Income bar
-            float incRatio=glm::clamp(p->GetTotalIncome()/500.0f,0.0f,1.0f);
-            DrawScreenText("Income: "+std::to_string(p->GetTotalIncome()),10,sh-panelH+34,1.0f,{0.85f,0.75f,0.4f,0.9f});
-            DrawScreenQuad(10,sh-panelH+48,220,8,{0.1f,0.1f,0.15f,0.5f});
-            DrawScreenQuad(10,sh-panelH+48,220*incRatio,8,{0.85f,0.7f,0.15f,0.9f});
+            float incRatio = glm::clamp(p->GetTotalIncome() / 500.0f, 0.0f, 1.0f);
+            DrawScreenText("Income: " + std::to_string(p->GetTotalIncome()),
+                10, sh - cpH + 38, 1.2f, { 0.85f,0.75f,0.4f,0.9f });
+            DrawScreenQuad(10, sh - cpH + 54, 220, 8, { 0.1f,0.1f,0.15f,0.5f });
+            DrawScreenQuad(10, sh - cpH + 54, 220 * incRatio, 8, { 0.85f,0.7f,0.15f,0.9f });
 
-            // Public order bar
-            float orderRatio=p->publicOrder/100.0f;
-            glm::vec4 orderColor=orderRatio>0.5f?glm::vec4(0.2f,0.7f,0.2f,0.9f):glm::vec4(0.8f,0.3f,0.2f,0.9f);
-            DrawScreenText("Order: "+std::to_string((int)p->publicOrder)+"%",10,sh-panelH+58,1.0f,orderColor);
-            DrawScreenQuad(10,sh-panelH+70,220,8,{0.1f,0.1f,0.15f,0.5f});
-            DrawScreenQuad(10,sh-panelH+70,220*orderRatio,8,orderColor);
+            float orderRatio = p->publicOrder / 100.0f;
+            glm::vec4 orderColor = orderRatio > 0.5f ?
+                glm::vec4(0.2f, 0.7f, 0.2f, 0.9f) : glm::vec4(0.8f, 0.3f, 0.2f, 0.9f);
+            DrawScreenText("Order: " + std::to_string((int)p->publicOrder) + "%",
+                10, sh - cpH + 64, 1.2f, orderColor);
         }
     }
 
-    // Faction indicators (top right — flag-style boxes with status)
-    float factionX = sw - 10;
-    const Faction* playerF = map.GetPlayerFaction();
-    for (int fi = (int)map.GetFactions().size() - 1; fi >= 0; fi--) {
-        const auto& f = map.GetFactions()[fi];
-        if (f.isPlayerControlled)continue;
-
-        float boxW = 90, boxH = 28;
-        factionX -= boxW + 4;
-        float fy = 4;
-
-        // Background
-        float alpha = f.isEliminated ? 0.25f : 0.85f;
-        DrawScreenQuad(factionX, fy, boxW, boxH, { 0.08f,0.08f,0.12f,alpha });
-
-        // Faction color stripe on left
-        DrawScreenQuad(factionX, fy, 4, boxH, { f.color.r,f.color.g,f.color.b,alpha });
-
-        // Faction name
-        DrawScreenText(f.name, factionX + 8, fy + 3, 0.85f,
-            { 0.9f,0.85f,0.7f,f.isEliminated ? 0.4f : 1.0f });
-
-        // War/peace status
-        if (f.isEliminated) {
-            DrawScreenText("DEFEATED", factionX + 8, fy + 15, 0.7f, { 0.5f,0.3f,0.3f,0.6f });
-        }
-        else if (playerF && f.IsAtWarWith(playerF->id)) {
-            DrawScreenText("AT WAR", factionX + 8, fy + 15, 0.7f, { 0.9f,0.25f,0.2f,0.9f });
-        }
-        else {
-            DrawScreenText("Neutral", factionX + 8, fy + 15, 0.7f, { 0.5f,0.6f,0.5f,0.7f });
-        }
-    }
-
-    glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
+    glEnable(GL_DEPTH_TEST); glEnable(GL_STENCIL_TEST);
 }
-
 // ── Notification banner ───────────────────────────────────────
 void Renderer::RenderNotification(const CampaignMap&map){
     if(map.GetNotificationTimer()<=0)return;
@@ -1671,7 +1679,6 @@ void Renderer::RenderEditorOverlay(const CampaignMap& map, int selProvIdx, int s
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_STENCIL_TEST);
 }
-
 void Renderer::RenderEditorHUD(const std::string& toolName, const std::string& selInfo,
     bool geometryDirty, int provinceCount, int obstacleCount)
 {
@@ -1680,42 +1687,37 @@ void Renderer::RenderEditorHUD(const std::string& toolName, const std::string& s
 
     float sw = (float)m_width, sh = (float)m_height;
 
-    // ── Top-left: Editor toolbar panel ──
-    float panW = 280, panH = 110;
+    // ── Top-left: Editor info panel ──
+    float panW = 360, panH = 130;
     DrawScreenQuad(0, 36, panW, panH, { 0.08f, 0.06f, 0.12f, 0.92f });
-    // Accent stripe
-    DrawScreenQuad(0, 36, 3, panH, { 0.9f, 0.7f, 0.2f, 1.0f });
+    DrawScreenQuad(0, 36, 4, panH, { 0.9f, 0.7f, 0.2f, 1.0f });
 
-    DrawScreenText("MAP EDITOR", 10, 40, 1.3f, { 1.0f, 0.9f, 0.4f, 1.0f });
+    DrawScreenText("MAP EDITOR", 14, 42, 2.0f, { 1.0f, 0.9f, 0.4f, 1.0f });
+    DrawScreenText("Tool: " + toolName, 14, 62, 1.6f, { 0.85f, 0.85f, 0.75f, 0.95f });
+    DrawScreenText("Sel: " + selInfo, 14, 82, 1.4f, { 0.7f, 0.7f, 0.6f, 0.85f });
 
-    // Tool indicator
-    DrawScreenText("Tool: " + toolName, 10, 56, 1.1f, { 0.85f, 0.85f, 0.75f, 0.95f });
-
-    // Selection info
-    DrawScreenText("Sel: " + selInfo, 10, 70, 1.0f, { 0.7f, 0.7f, 0.6f, 0.85f });
-
-    // Stats
     std::string stats = std::to_string(provinceCount) + " provinces, " + std::to_string(obstacleCount) + " obstacles";
-    DrawScreenText(stats, 10, 84, 0.9f, { 0.55f, 0.55f, 0.5f, 0.7f });
+    DrawScreenText(stats, 14, 100, 1.2f, { 0.55f, 0.55f, 0.5f, 0.7f });
 
-    // Dirty indicator
     if (geometryDirty) {
-        DrawScreenText("* UNSAVED CHANGES *", 10, 98, 0.9f, { 1.0f, 0.4f, 0.3f, 0.9f });
+        DrawScreenText("* UNSAVED CHANGES *", 14, 116, 1.2f, { 1.0f, 0.4f, 0.3f, 0.9f });
     }
 
     // ── Bottom-left: Keybinds ──
-    float helpY = sh - 90;
-    float helpW = 320, helpH = 86;
+    float helpW = 380, helpH = 110;
+    float helpY = sh - helpH;
     DrawScreenQuad(0, helpY, helpW, helpH, { 0.08f, 0.06f, 0.12f, 0.85f });
-    DrawScreenQuad(0, helpY, 3, helpH, { 0.4f, 0.6f, 0.9f, 0.8f });
+    DrawScreenQuad(0, helpY, 4, helpH, { 0.4f, 0.6f, 0.9f, 0.8f });
 
-    DrawScreenText("1:Select  2:Move  3:Add  4:Delete  5:City", 8, helpY + 4, 0.85f,
+    DrawScreenText("1:Select  2:AddVertex  3:MoveCity", 12, helpY + 6, 1.3f,
         { 0.75f, 0.8f, 0.9f, 0.9f });
-    DrawScreenText("LClick:Pick  Drag:Move  RClick:Delete", 8, helpY + 18, 0.85f,
+    DrawScreenText("LClick:Select  RDrag:Move vertex", 12, helpY + 24, 1.3f,
         { 0.65f, 0.7f, 0.75f, 0.8f });
-    DrawScreenText("F5:Save  F8:Load  R:Rebuild  E:Exit", 8, helpY + 32, 0.85f,
+    DrawScreenText("Del:Delete  Ctrl+Z:Undo  Ctrl+Y:Redo", 12, helpY + 42, 1.3f,
         { 0.65f, 0.7f, 0.75f, 0.8f });
-    DrawScreenText("Arrow keys:Pan  Scroll:Zoom", 8, helpY + 46, 0.85f,
+    DrawScreenText("Ctrl+S:Save  Ctrl+L:Load  R:Rebuild", 12, helpY + 60, 1.3f,
+        { 0.65f, 0.7f, 0.75f, 0.8f });
+    DrawScreenText("WASD/Arrows:Pan  Scroll:Zoom  E:Exit", 12, helpY + 78, 1.3f,
         { 0.55f, 0.6f, 0.65f, 0.7f });
 
     glEnable(GL_DEPTH_TEST);

@@ -26,6 +26,7 @@ set(CAMPAIGN_SOURCES
     src/campaign/Army.cpp
     src/campaign/Economy.cpp
     src/campaign/TurnManager.cpp
+    src/campaign/HeightMap.cpp
 )
 
 set(BATTLE_SOURCES

@@ -4,6 +4,7 @@
 #include "campaign/CampaignMap.h"
 #include "core/InputManager.h"
 #include "utils/Logger.h"
+
 #include <algorithm>
 #include <cmath>
 #include <queue>
@@ -301,10 +302,11 @@ float CampaignMap::GetTerrainHeight(float x, float z)const {
     }
     return h;
 }
-float CampaignMap::GetBaseTerrainHeight(float x, float z)const {
+float CampaignMap::GetBaseTerrainHeight(float x, float z) const {
     float h = terFbm(x * 1.5f, z * 1.5f) * 0.35f;
     h += terFbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.12f;
     h += terNoise(x * 10.0f, z * 10.0f) * 0.03f;
+    h += m_heightMap.Sample(x, z);   // ← ADD
     return h;
 }
 

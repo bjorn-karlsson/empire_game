@@ -79,6 +79,8 @@ private:
     unsigned int m_moveMeshVAO=0,m_moveMeshVBO=0;int m_moveMeshVerts=0;
     unsigned int m_pathVAO=0,m_pathVBO=0;int m_pathVerts=0;
 
+    int m_fontAtlasW = 128, m_fontAtlasH = 64;
+    int m_fontCellSize = 8, m_fontGlyphSize = 8;
     // Font texture atlas
     unsigned int m_fontTexture=0;
     unsigned int m_textVAO=0,m_textVBO=0;

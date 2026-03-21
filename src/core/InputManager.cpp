@@ -22,12 +22,16 @@ void InputManager::Update()
     // Poll keyboard — only track keys we've seen or commonly used
     // GLFW keys are queried on demand, so we sample the ones we care about
     int trackedKeys[] = {
-        GLFW_KEY_ESCAPE, GLFW_KEY_SPACE, GLFW_KEY_ENTER,
-        GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D, GLFW_KEY_L,
-        GLFW_KEY_Q, GLFW_KEY_E, GLFW_KEY_R, GLFW_KEY_T,
-        GLFW_KEY_F4, GLFW_KEY_F5, GLFW_KEY_F8, GLFW_KEY_LEFT_ALT, GLFW_KEY_LEFT_SHIFT,
-        GLFW_KEY_TAB, GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4, GLFW_KEY_5,
-        GLFW_KEY_UP, GLFW_KEY_DOWN, GLFW_KEY_LEFT, GLFW_KEY_RIGHT,
+    GLFW_KEY_ESCAPE, GLFW_KEY_SPACE, GLFW_KEY_ENTER,
+    GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D,
+    GLFW_KEY_Q, GLFW_KEY_E, GLFW_KEY_R, GLFW_KEY_T,
+    GLFW_KEY_L, GLFW_KEY_Y, GLFW_KEY_Z,                
+    GLFW_KEY_DELETE,                                   
+    GLFW_KEY_LEFT_CONTROL, GLFW_KEY_RIGHT_CONTROL,     
+    GLFW_KEY_F4, GLFW_KEY_LEFT_ALT, GLFW_KEY_LEFT_SHIFT,
+    GLFW_KEY_TAB, GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3,
+    GLFW_KEY_4, GLFW_KEY_5,
+    GLFW_KEY_UP, GLFW_KEY_DOWN, GLFW_KEY_LEFT, GLFW_KEY_RIGHT,
     };
     for (int key : trackedKeys) {
         m_keysCurrent[key] = (glfwGetKey(m_window, key) == GLFW_PRESS);

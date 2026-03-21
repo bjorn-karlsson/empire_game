@@ -2,6 +2,7 @@
 #include "campaign/Province.h"
 #include "campaign/Faction.h"
 #include "campaign/Army.h"
+#include "campaign/HeightMap.h"
 #include <vector>
 #include <unordered_map>
 #include <string>
@@ -166,7 +167,16 @@ public:
     std::vector<Army*> GetArmiesInProvince(int);
 
     void BuildNavGrid();
+
+
+    HeightMap& GetHeightMap() { return m_heightMap; }
+    const HeightMap& GetHeightMap() const { return m_heightMap; }
+
+
 private:
+
+    HeightMap m_heightMap;
+
     void UpdateArmyPositions(float dt);
     void UpdateArmyProvince(Army&);
     void CheckForBattles(); // legacy, no longer auto-called

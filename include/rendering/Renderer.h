@@ -32,6 +32,8 @@ private:
     void BuildWaterPlane();void BuildArmyMarker();void BuildCircle();
     void BuildFontTexture();
 
+    void RenderObstacleStencil(const CampaignMap& map);
+
     void RenderWater();
     void RenderForeignTerritories(const CampaignMap&);
     void RenderProvinces(const CampaignMap&);

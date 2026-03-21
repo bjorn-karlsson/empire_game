@@ -50,54 +50,93 @@ void Renderer::RebuildProvinceColors(const CampaignMap&){
     // Colors are sent as uniforms each frame — no GPU rebuild needed
 }
 
-void Renderer::BuildProvinceGPU(const Province&prov){
-    if(prov.borderVertices.size()<3)return;
-    ProvinceGPU gpu;std::vector<float>v;
-    glm::vec3 c=prov.center;int n=(int)prov.borderVertices.size();
-    for(int i=0;i<n;i++){auto&v0=prov.borderVertices[i];auto&v1=prov.borderVertices[(i+1)%n];
-        v.insert(v.end(),{c.x,c.y,c.z,0,0,v0.x,v0.y,v0.z,1,0,v1.x,v1.y,v1.z,1,0});}
-    gpu.vertexCount=n*3;
-    glGenVertexArrays(1,&gpu.VAO);glGenBuffers(1,&gpu.VBO);glBindVertexArray(gpu.VAO);glBindBuffer(GL_ARRAY_BUFFER,gpu.VBO);
-    glBufferData(GL_ARRAY_BUFFER,v.size()*sizeof(float),v.data(),GL_STATIC_DRAW);
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,5*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,5*sizeof(float),(void*)(3*sizeof(float)));glEnableVertexAttribArray(1);
+void Renderer::BuildProvinceGPU(const Province& prov) {
+    if (prov.borderVertices.size() < 3)return;
+    ProvinceGPU gpu; std::vector<float>v;
+    glm::vec3 c = prov.center; int n = (int)prov.borderVertices.size();
+    const int SUBS = 4; // subdivisions per edge
+    for (int i = 0; i < n; i++) {
+        glm::vec3 v0 = prov.borderVertices[i];
+        glm::vec3 v1 = prov.borderVertices[(i + 1) % n];
+        for (int s = 0; s < SUBS; s++) {
+            float t0 = (float)s / SUBS;
+            float t1 = (float)(s + 1) / SUBS;
+            glm::vec3 a = glm::mix(v0, v1, t0);
+            glm::vec3 b = glm::mix(v0, v1, t1);
+            // edge attribute: 0=center, 1=border
+            // interpolate edge: sub-vertices are all on the border (edge=1)
+            v.insert(v.end(), { c.x,c.y,c.z,0,0, a.x,a.y,a.z,1,0, b.x,b.y,b.z,1,0 });
+        }
+    }
+    gpu.vertexCount = n * SUBS * 3;
+    glGenVertexArrays(1, &gpu.VAO); glGenBuffers(1, &gpu.VBO); glBindVertexArray(gpu.VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gpu.VBO);
+    glBufferData(GL_ARRAY_BUFFER, v.size() * sizeof(float), v.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1);
     glBindVertexArray(0);
-    std::vector<float>bv;
-    for(auto&vt:prov.borderVertices)bv.insert(bv.end(),{vt.x,vt.y+0.02f,vt.z});
-    bv.insert(bv.end(),{prov.borderVertices[0].x,prov.borderVertices[0].y+0.02f,prov.borderVertices[0].z});
-    gpu.borderVertexCount=n+1;
-    glGenVertexArrays(1,&gpu.borderVAO);glGenBuffers(1,&gpu.borderVBO);glBindVertexArray(gpu.borderVAO);
-    glBindBuffer(GL_ARRAY_BUFFER,gpu.borderVBO);glBufferData(GL_ARRAY_BUFFER,bv.size()*sizeof(float),bv.data(),GL_STATIC_DRAW);
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);glEnableVertexAttribArray(0);
-    glBindVertexArray(0);m_provinceGPUs[prov.id]=gpu;
-}
 
+    // Border line strip (also subdivided)
+    std::vector<float>bv;
+    for (int i = 0; i < n; i++) {
+        glm::vec3 v0 = prov.borderVertices[i];
+        glm::vec3 v1 = prov.borderVertices[(i + 1) % n];
+        for (int s = 0; s < SUBS; s++) {
+            float t = (float)s / SUBS;
+            glm::vec3 p = glm::mix(v0, v1, t);
+            bv.insert(bv.end(), { p.x,p.y + 0.02f,p.z });
+        }
+    }
+    // close the loop
+    bv.insert(bv.end(), { prov.borderVertices[0].x,prov.borderVertices[0].y + 0.02f,prov.borderVertices[0].z });
+    gpu.borderVertexCount = n * SUBS + 1;
+    glGenVertexArrays(1, &gpu.borderVAO); glGenBuffers(1, &gpu.borderVBO); glBindVertexArray(gpu.borderVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gpu.borderVBO);
+    glBufferData(GL_ARRAY_BUFFER, bv.size() * sizeof(float), bv.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
+    glBindVertexArray(0); m_provinceGPUs[prov.id] = gpu;
+}
 // ── BuildObstacleGPU ──────────────────────────────────────────
 void Renderer::BuildObstacleGPU(const TerrainObstacle& ob) {
     if (ob.vertices.size() < 3)return; ObstacleGPU gpu; std::vector<float>v;
     glm::vec3 c = ob.center; int n = (int)ob.vertices.size();
+    const int SUBS = 4;
     for (int i = 0; i < n; i++) {
-        auto& v0 = ob.vertices[i]; auto& v1 = ob.vertices[(i + 1) % n];
-        // center=edge0, border verts=edge1 (4 floats per vert: x,y,z,edge)
-        v.insert(v.end(), { c.x,0,c.z,0, v0.x,0,v0.z,1, v1.x,0,v1.z,1 });
+        glm::vec3 v0 = ob.vertices[i];
+        glm::vec3 v1 = ob.vertices[(i + 1) % n];
+        for (int s = 0; s < SUBS; s++) {
+            float t0 = (float)s / SUBS;
+            float t1 = (float)(s + 1) / SUBS;
+            glm::vec3 a = glm::mix(v0, v1, t0);
+            glm::vec3 b = glm::mix(v0, v1, t1);
+            // edge attribute: 0=center, 1=border
+            v.insert(v.end(), { c.x,0,c.z,0, a.x,0,a.z,1, b.x,0,b.z,1 });
+        }
     }
-    gpu.vertexCount = n * 3;
+    gpu.vertexCount = n * SUBS * 3;
     glGenVertexArrays(1, &gpu.VAO); glGenBuffers(1, &gpu.VBO); glBindVertexArray(gpu.VAO);
     glBindBuffer(GL_ARRAY_BUFFER, gpu.VBO); glBufferData(GL_ARRAY_BUFFER, v.size() * sizeof(float), v.data(), GL_STATIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1);
     glBindVertexArray(0); m_obstacleGPUs.push_back(gpu);
 }
-
 // ── BuildForeignGPU ───────────────────────────────────────────
 void Renderer::BuildForeignGPU(const ForeignTerritory& ft) {
     if (ft.vertices.size() < 3)return; ObstacleGPU gpu; std::vector<float>v;
     glm::vec3 c = ft.center; int n = (int)ft.vertices.size();
+    const int SUBS = 4;
     for (int i = 0; i < n; i++) {
-        auto& v0 = ft.vertices[i]; auto& v1 = ft.vertices[(i + 1) % n];
-        v.insert(v.end(), { c.x,0,c.z,0,0, v0.x,0,v0.z,1,0, v1.x,0,v1.z,1,0 });
+        glm::vec3 v0 = ft.vertices[i];
+        glm::vec3 v1 = ft.vertices[(i + 1) % n];
+        for (int s = 0; s < SUBS; s++) {
+            float t0 = (float)s / SUBS;
+            float t1 = (float)(s + 1) / SUBS;
+            glm::vec3 a = glm::mix(v0, v1, t0);
+            glm::vec3 b = glm::mix(v0, v1, t1);
+            v.insert(v.end(), { c.x,0,c.z,0,0, a.x,0,a.z,1,0, b.x,0,b.z,1,0 });
+        }
     }
-    gpu.vertexCount = n * 3;
+    gpu.vertexCount = n * SUBS * 3;
     glGenVertexArrays(1, &gpu.VAO); glGenBuffers(1, &gpu.VBO); glBindVertexArray(gpu.VAO);
     glBindBuffer(GL_ARRAY_BUFFER, gpu.VBO);
     glBufferData(GL_ARRAY_BUFFER, v.size() * sizeof(float), v.data(), GL_STATIC_DRAW);
@@ -105,7 +144,6 @@ void Renderer::BuildForeignGPU(const ForeignTerritory& ft) {
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1);
     glBindVertexArray(0); m_foreignGPUs.push_back(gpu);
 }
-
 void Renderer::BuildFontTexture(){
     // Create 128x64 texture atlas: 16 chars per row, 6 rows, each char 8x8 pixels
     const int atlasW=128,atlasH=64;
@@ -183,7 +221,7 @@ layout(location=1)in vec2 aEdge;
 uniform mat4 u_VP;
 out vec3 v_W;
 out float v_E;
- 
+
 float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float noise(vec2 p){
     vec2 i=floor(p); vec2 f=fract(p);
@@ -198,10 +236,10 @@ float fbm(vec2 p){
 }
 void main(){
     vec3 pos = aPos;
-    float h = fbm(pos.xz * 1.5) * 0.25;
-    h += fbm(pos.xz * 4.0 + 50.0) * 0.08;
-    h += noise(pos.xz * 10.0) * 0.02;
-    h *= (1.0 - aEdge.x * 0.5);
+    float h = fbm(pos.xz * 1.5) * 0.35;
+    h += fbm(pos.xz * 4.0 + 50.0) * 0.12;
+    h += noise(pos.xz * 10.0) * 0.03;
+    h *= (1.0 - aEdge.x * 0.4);
     pos.y += h;
     v_W = pos;
     v_E = aEdge.x;
@@ -515,24 +553,32 @@ void Renderer::RenderProvinces(const CampaignMap&map){
 void Renderer::RenderObstacles(const CampaignMap& map) {
     auto& obs = map.GetObstacles();
 
-    // Mountains
+    // Mountains (with height shader)
     m_borderShader->Use();
     m_borderShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
     for (int i = 0; i < (int)obs.size() && i < (int)m_obstacleGPUs.size(); i++) {
-        if (obs[i].type == "lake")continue;
+        if (obs[i].type != "mountain")continue;
         m_borderShader->SetVec3("u_Color", obs[i].color);
         glBindVertexArray(m_obstacleGPUs[i].VAO);
         glDrawArrays(GL_TRIANGLES, 0, m_obstacleGPUs[i].vertexCount);
     }
     glBindVertexArray(0);
 
-    // Lakes (flat, no height)
+    // Lakes (flat, blue, slight transparency)
     m_overlayShader->Use();
     m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
     m_overlayShader->SetMat4("u_Model", glm::mat4(1.0f));
     for (int i = 0; i < (int)obs.size() && i < (int)m_obstacleGPUs.size(); i++) {
         if (obs[i].type != "lake")continue;
-        m_overlayShader->SetVec4("u_Color", { obs[i].color.r,obs[i].color.g,obs[i].color.b,0.85f });
+        m_overlayShader->SetVec4("u_Color", { 0.08f,0.22f,0.42f,0.80f });
+        glBindVertexArray(m_obstacleGPUs[i].VAO);
+        glDrawArrays(GL_TRIANGLES, 0, m_obstacleGPUs[i].vertexCount);
+    }
+
+    // Rivers (flat, blue, more transparent, thinner look)
+    for (int i = 0; i < (int)obs.size() && i < (int)m_obstacleGPUs.size(); i++) {
+        if (obs[i].type != "river")continue;
+        m_overlayShader->SetVec4("u_Color", { 0.10f,0.25f,0.48f,0.70f });
         glBindVertexArray(m_obstacleGPUs[i].VAO);
         glDrawArrays(GL_TRIANGLES, 0, m_obstacleGPUs[i].vertexCount);
     }

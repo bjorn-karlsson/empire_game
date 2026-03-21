@@ -42,7 +42,10 @@ static float terFbm(float x, float z) {
 
 bool CampaignMap::IsPointPassable(const glm::vec3&pos)const{
     glm::vec2 pt(pos.x,pos.z);
-    for(auto&ob:m_obstacles)if(PtInPoly(pt,ob.vertices))return false;
+    for(auto&ob:m_obstacles){
+        if(ob.type=="river")continue; 
+        if(PtInPoly(pt,ob.vertices))return false;
+    }
     return IsPointOnLand(pos);
 }
 bool CampaignMap::IsPointOnLand(const glm::vec3& pos)const {
@@ -272,13 +275,13 @@ static float s_fbm(float x, float z) {
 }
 
 float CampaignMap::GetTerrainHeight(float x, float z)const {
-    float h = terFbm(x * 1.5f, z * 1.5f) * 0.25f;
-    h += terFbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.08f;
-    h += terNoise(x * 10.0f, z * 10.0f) * 0.02f;
+    float h = terFbm(x * 1.5f, z * 1.5f) * 0.35f;
+    h += terFbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.12f;
+    h += terNoise(x * 10.0f, z * 10.0f) * 0.03f;
 
     glm::vec2 pt(x, z);
     for (const auto& ob : m_obstacles) {
-        if (ob.type == "lake")continue;
+        if (ob.type == "lake" || ob.type == "river")continue;
         bool inside = false;
         int n = (int)ob.vertices.size();
         for (int i = 0, j = n - 1; i < n; j = i++) {
@@ -288,22 +291,20 @@ float CampaignMap::GetTerrainHeight(float x, float z)const {
                 inside = !inside;
         }
         if (inside) {
-            // Mountain height ON TOP of terrain base (matches shader)
             float mh = terFbm(x * 2.0f, z * 2.0f) * 0.6f;
             mh += terFbm(x * 5.0f + 30.0f, z * 5.0f + 30.0f) * 0.2f;
             mh += terNoise(x * 12.0f, z * 12.0f) * 0.08f;
             mh += 0.1f;
-            h += mh;  // ADD to terrain, don't replace
+            h += mh;
             break;
         }
     }
     return h;
 }
-
 float CampaignMap::GetBaseTerrainHeight(float x, float z)const {
-    float h = terFbm(x * 1.5f, z * 1.5f) * 0.25f;
-    h += terFbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.08f;
-    h += terNoise(x * 10.0f, z * 10.0f) * 0.02f;
+    float h = terFbm(x * 1.5f, z * 1.5f) * 0.35f;
+    h += terFbm(x * 4.0f + 50.0f, z * 4.0f + 50.0f) * 0.12f;
+    h += terNoise(x * 10.0f, z * 10.0f) * 0.03f;
     return h;
 }
 
@@ -497,7 +498,8 @@ void CampaignMap::GenerateTestMap() {
         itNapN = V(12.0, 8.5),      // Naples north
         itNapE = V(13.5, 9.5),      // Naples east
         itNapS = V(13.0, 11.0),     // Naples south
-        itNapW = V(11.0, 10.0);     // Naples west coast
+        itNapW = V(11.0, 10.0),     // Naples west coast
+        itPiedMilMid = V(8.2f, 4.2f);   // midpoint of Piedmont-Milan shared edge
 
     // ── SPAIN BORDER POINTS ──
     glm::vec3
@@ -630,15 +632,15 @@ void CampaignMap::GenerateTestMap() {
     // ═══════════════════════════════════════════════════════════
 
     // 21: Piedmont-Savoy — northwest Italy
-    m_provinces.push_back(mkP(21, "Piedmont", "Turin", "sardinia",
-        { cAlpS,itPiedN,itPiedE,itGenoa,itPiedW },
-        200, true, true, "hills"));
+    m_provinces.push_back(mkP(21,"Piedmont","Turin","sardinia",
+        {cAlpS,itPiedN,itPiedE,itPiedMilMid,itGenoa,itPiedW},
+        200,true,true,"hills"));
     m_provinces[21].cityPos = { 7.5f,0,4.0f };
 
     // 22: Milan (Lombardy) — Austrian possession
-    m_provinces.push_back(mkP(22, "Milan", "Milan", "austria",
-        { itPiedN,itMilN,itMilE,itMilS,itGenoa,itPiedE },
-        350, false, false));
+    m_provinces.push_back(mkP(22,"Milan","Milan","austria",
+        {itPiedN,itMilN,itMilE,itMilS,itGenoa,itPiedMilMid,itPiedE},
+        350,false,false));
     m_provinces[22].cityPos = { 9.2f,0,3.5f };
 
     // 23: Venice — northeast Italy
@@ -762,13 +764,37 @@ void CampaignMap::GenerateTestMap() {
     m_obstacles.push_back({ "Jura","mountain",
         {V(5.8f,0.0f),V(6.4f,0.2f),V(6.6f,1.0f),V(6.2f,1.3f),V(5.6f,0.8f)},
         {},{0.60f,0.56f,0.50f} });
-    m_obstacles.push_back({ "Lac Leman","lake",
-        {V(6.0f,1.2f),V(6.6f,1.0f),V(6.8f,1.5f),V(6.4f,1.8f),V(5.8f,1.5f)},
-        {},{0.12f,0.28f,0.50f} });
+    m_obstacles.push_back({"Lac Leman","lake",
+        {V(5.6f,1.3f),V(5.9f,1.1f),V(6.3f,1.1f),V(6.5f,1.3f),
+         V(6.3f,1.5f),V(5.9f,1.5f)},
+        {},{0.12f,0.28f,0.50f}});
     m_obstacles.push_back({ "Apennines","mountain",
         {V(9.0f,5.0f),V(9.8f,5.5f),V(10.5f,6.5f),V(11.0f,7.5f),V(12.0f,8.0f),
          V(11.5f,8.5f),V(10.5f,7.0f),V(9.5f,6.0f),V(8.5f,5.2f)},
         {},{0.55f,0.50f,0.42f} });
+
+    // Rivers (thin polygon strips)
+    m_obstacles.push_back({"River Seine","river",
+        {V(-2.0f,-4.0f),V(-1.5f,-3.5f),V(-1.0f,-2.8f),V(-0.5f,-2.0f),
+         V(-0.3f,-1.5f),V(-0.8f,-1.0f),V(-1.2f,-0.5f),
+         V(-1.0f,-0.3f),V(-0.5f,-1.3f),V(-0.1f,-1.8f),
+         V(0.0f,-2.2f),V(-0.7f,-3.0f),V(-1.2f,-3.3f),V(-1.8f,-3.8f)},
+        {},{0.15f,0.30f,0.52f}});
+    
+    m_obstacles.push_back({"River Loire","river",
+        {V(-5.5f,0.8f),V(-4.5f,0.8f),V(-3.5f,0.5f),V(-2.5f,0.2f),
+         V(-1.5f,0.0f),V(-0.5f,0.3f),V(0.0f,0.8f),
+         V(-0.2f,1.0f),V(-0.8f,0.5f),V(-1.8f,0.2f),
+         V(-2.7f,0.4f),V(-3.7f,0.7f),V(-4.7f,1.0f),V(-5.5f,1.0f)},
+        {},{0.15f,0.30f,0.52f}});
+    
+    m_obstacles.push_back({"River Rhine","river",
+        {V(6.3f,-2.0f),V(6.4f,-1.5f),V(6.5f,-0.8f),V(6.5f,0.0f),
+         V(6.3f,0.3f),V(6.1f,0.5f),
+         V(6.3f,0.5f),V(6.5f,0.1f),V(6.7f,-0.6f),
+         V(6.7f,-1.3f),V(6.6f,-1.8f),V(6.5f,-2.0f)},
+        {},{0.15f,0.30f,0.52f}});
+
     for (auto& ob : m_obstacles)ob.center = Centroid(ob.vertices);
 
     // ═══════════════════════════════════════════════════════════

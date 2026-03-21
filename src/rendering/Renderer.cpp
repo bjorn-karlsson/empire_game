@@ -44,7 +44,6 @@ bool Renderer::Init(){
 void Renderer::BuildMapGeometry(const CampaignMap&map){
     for(const auto&p:map.GetProvinces())BuildProvinceGPU(p);
     for(const auto&ob:map.GetObstacles())BuildObstacleGPU(ob);
-    for(const auto&ft:map.GetForeignTerritories())BuildForeignGPU(ft);
 }
 void Renderer::RebuildProvinceColors(const CampaignMap&){
     // Colors are sent as uniforms each frame — no GPU rebuild needed
@@ -120,30 +119,7 @@ void Renderer::BuildObstacleGPU(const TerrainObstacle& ob) {
     glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1);
     glBindVertexArray(0); m_obstacleGPUs.push_back(gpu);
 }
-// ── BuildForeignGPU ───────────────────────────────────────────
-void Renderer::BuildForeignGPU(const ForeignTerritory& ft) {
-    if (ft.vertices.size() < 3)return; ObstacleGPU gpu; std::vector<float>v;
-    glm::vec3 c = ft.center; int n = (int)ft.vertices.size();
-    const int SUBS = 4;
-    for (int i = 0; i < n; i++) {
-        glm::vec3 v0 = ft.vertices[i];
-        glm::vec3 v1 = ft.vertices[(i + 1) % n];
-        for (int s = 0; s < SUBS; s++) {
-            float t0 = (float)s / SUBS;
-            float t1 = (float)(s + 1) / SUBS;
-            glm::vec3 a = glm::mix(v0, v1, t0);
-            glm::vec3 b = glm::mix(v0, v1, t1);
-            v.insert(v.end(), { c.x,0,c.z,0,0, a.x,0,a.z,1,0, b.x,0,b.z,1,0 });
-        }
-    }
-    gpu.vertexCount = n * SUBS * 3;
-    glGenVertexArrays(1, &gpu.VAO); glGenBuffers(1, &gpu.VBO); glBindVertexArray(gpu.VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, gpu.VBO);
-    glBufferData(GL_ARRAY_BUFFER, v.size() * sizeof(float), v.data(), GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1);
-    glBindVertexArray(0); m_foreignGPUs.push_back(gpu);
-}
+
 void Renderer::BuildFontTexture() {
     // Upscale 8x8 font to 16x16 with 1px padding for clean filtering
     const int SCALE = 2;
@@ -544,8 +520,7 @@ void Renderer::RenderCampaignMap(const CampaignMap& map) {
     glStencilFunc(GL_ALWAYS, 1, 0xFF);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     glStencilMask(0xFF);
-    RenderProvinces(map);
-    RenderForeignTerritories(map);
+    RenderProvinces(map);    // ALL land is provinces now
 
     glStencilFunc(GL_EQUAL, 0, 0xFF);
     glStencilMask(0x00);
@@ -653,17 +628,7 @@ void Renderer::RenderBorders(const CampaignMap& map) {
             }
             if (inside)return true;
         }
-        for (const auto& ft : map.GetForeignTerritories()) {
-            bool inside = false;
-            int n = (int)ft.vertices.size();
-            for (int i = 0, j = n - 1; i < n; j = i++) {
-                float zi = ft.vertices[i].z, zj = ft.vertices[j].z;
-                float xi = ft.vertices[i].x, xj = ft.vertices[j].x;
-                if (((zi > pt.y) != (zj > pt.y)) && (pt.x < (xj - xi) * (pt.y - zi) / (zj - zi) + xi))
-                    inside = !inside;
-            }
-            if (inside)return true;
-        }
+        
         return false;
         };
 
@@ -794,20 +759,6 @@ void Renderer::DrawWorldText(const std::string&text,glm::vec3 worldPos,float sca
     DrawScreenText(text,sx-textW*0.5f,sy,scale,color);
 }
 
-// ── RenderForeignTerritories ──────────────────────────────────
-void Renderer::RenderForeignTerritories(const CampaignMap& map) {
-    m_provinceShader->Use();
-    m_provinceShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
-    auto& fts = map.GetForeignTerritories();
-    for (int i = 0; i < (int)fts.size() && i < (int)m_foreignGPUs.size(); i++) {
-        glm::vec3 c = fts[i].color * 0.55f;
-        m_provinceShader->SetVec3("u_Color", c);
-        glBindVertexArray(m_foreignGPUs[i].VAO);
-        glDrawArrays(GL_TRIANGLES, 0, m_foreignGPUs[i].vertexCount);
-    }
-    glBindVertexArray(0);
-}
-
 
 // ── Map labels (province names, city names, army names, foreign countries) ──
 // ── RenderMapLabels ───────────────────────────────────────────
@@ -838,10 +789,6 @@ void Renderer::RenderMapLabels(const CampaignMap& map) {
         DrawWorldText(info, { a.worldPosition.x,th + 1.0f,a.worldPosition.z + 0.15f }, 0.8f, { 0.8f,0.8f,0.75f,0.75f });
     }
 
-    for (const auto& ft : map.GetForeignTerritories()) {
-        float th = map.GetBaseTerrainHeight(ft.center.x, ft.center.z);
-        DrawWorldText(ft.name, { ft.center.x,th + 0.2f,ft.center.z }, 1.5f, { 0.6f,0.55f,0.45f,0.7f });
-    }
 
     glEnable(GL_DEPTH_TEST); glEnable(GL_STENCIL_TEST);
 }
@@ -1501,11 +1448,7 @@ void Renderer::ClearMapGeometry() {
         if (g.VBO) glDeleteBuffers(1, &g.VBO);
     }
     m_obstacleGPUs.clear();
-    for (auto& g : m_foreignGPUs) {
-        if (g.VAO) glDeleteVertexArrays(1, &g.VAO);
-        if (g.VBO) glDeleteBuffers(1, &g.VBO);
-    }
-    m_foreignGPUs.clear();
+
 }
 
 void Renderer::RenderEditorOverlay(const CampaignMap& map, int selProvIdx, int selVertIdx,
@@ -1682,44 +1625,33 @@ void Renderer::RenderEditorOverlay(const CampaignMap& map, int selProvIdx, int s
 void Renderer::RenderEditorHUD(const std::string& toolName, const std::string& selInfo,
     bool geometryDirty, int provinceCount, int obstacleCount)
 {
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_STENCIL_TEST);
-
+    glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST);
     float sw = (float)m_width, sh = (float)m_height;
 
-    // ── Top-left: Editor info panel ──
-    float panW = 360, panH = 130;
-    DrawScreenQuad(0, 36, panW, panH, { 0.08f, 0.06f, 0.12f, 0.92f });
-    DrawScreenQuad(0, 36, 4, panH, { 0.9f, 0.7f, 0.2f, 1.0f });
-
-    DrawScreenText("MAP EDITOR", 14, 42, 2.0f, { 1.0f, 0.9f, 0.4f, 1.0f });
-    DrawScreenText("Tool: " + toolName, 14, 62, 1.6f, { 0.85f, 0.85f, 0.75f, 0.95f });
-    DrawScreenText("Sel: " + selInfo, 14, 82, 1.4f, { 0.7f, 0.7f, 0.6f, 0.85f });
-
+    // Top-left info panel
+    float panW = 400, panH = 130;
+    DrawScreenQuad(0, 0, panW, panH, { 0.08f, 0.06f, 0.12f, 0.92f });
+    DrawScreenQuad(0, 0, 4, panH, { 0.9f, 0.7f, 0.2f, 1.0f });
+    DrawScreenText("MAP EDITOR", 14, 6, 2.0f, { 1.0f, 0.9f, 0.4f, 1.0f });
+    DrawScreenText("Tool: " + toolName, 14, 28, 1.6f, { 0.85f, 0.85f, 0.75f, 0.95f });
+    DrawScreenText("Sel: " + selInfo, 14, 48, 1.4f, { 0.7f, 0.7f, 0.6f, 0.85f });
     std::string stats = std::to_string(provinceCount) + " provinces, " + std::to_string(obstacleCount) + " obstacles";
-    DrawScreenText(stats, 14, 100, 1.2f, { 0.55f, 0.55f, 0.5f, 0.7f });
+    DrawScreenText(stats, 14, 66, 1.2f, { 0.55f, 0.55f, 0.5f, 0.7f });
+    if (geometryDirty) DrawScreenText("* UNSAVED *", 14, 82, 1.2f, { 1.0f, 0.4f, 0.3f, 0.9f });
 
-    if (geometryDirty) {
-        DrawScreenText("* UNSAVED CHANGES *", 14, 116, 1.2f, { 1.0f, 0.4f, 0.3f, 0.9f });
-    }
-
-    // ── Bottom-left: Keybinds ──
-    float helpW = 380, helpH = 110;
+    // Bottom-left keybind panel (wider)
+    float helpW = 520, helpH = 140;
     float helpY = sh - helpH;
-    DrawScreenQuad(0, helpY, helpW, helpH, { 0.08f, 0.06f, 0.12f, 0.85f });
+    DrawScreenQuad(0, helpY, helpW, helpH, { 0.08f, 0.06f, 0.12f, 0.88f });
     DrawScreenQuad(0, helpY, 4, helpH, { 0.4f, 0.6f, 0.9f, 0.8f });
 
-    DrawScreenText("1:Select  2:AddVertex  3:MoveCity", 12, helpY + 6, 1.3f,
-        { 0.75f, 0.8f, 0.9f, 0.9f });
-    DrawScreenText("LClick:Select  RDrag:Move vertex", 12, helpY + 24, 1.3f,
-        { 0.65f, 0.7f, 0.75f, 0.8f });
-    DrawScreenText("Del:Delete  Ctrl+Z:Undo  Ctrl+Y:Redo", 12, helpY + 42, 1.3f,
-        { 0.65f, 0.7f, 0.75f, 0.8f });
-    DrawScreenText("Ctrl+S:Save  Ctrl+L:Load  R:Rebuild", 12, helpY + 60, 1.3f,
-        { 0.65f, 0.7f, 0.75f, 0.8f });
-    DrawScreenText("WASD/Arrows:Pan  Scroll:Zoom  E:Exit", 12, helpY + 78, 1.3f,
-        { 0.55f, 0.6f, 0.65f, 0.7f });
+    float lx = 12, s = 1.3f;
+    DrawScreenText("Tools:  1:Select  2:AddVertex  3:LinkVertex  4:HeightBrush  5:MoveCity", lx, helpY + 6, s, { 0.8f, 0.85f, 0.95f, 0.95f });
+    DrawScreenText("Mouse:  LClick:Select  RightDrag:Move vertex  Del:Delete vertex", lx, helpY + 24, s, { 0.7f, 0.75f, 0.8f, 0.85f });
+    DrawScreenText("Brush:  LDrag:Raise  RDrag:Lower  Scroll:Size  Q/G/F:Mode", lx, helpY + 42, s, { 0.7f, 0.75f, 0.8f, 0.85f });
+    DrawScreenText("Province: Ctrl+N:New  Ctrl+Del:Delete province", lx, helpY + 60, s, { 0.7f, 0.75f, 0.8f, 0.85f });
+    DrawScreenText("File:  Ctrl+S:Save  Ctrl+L:Load  Ctrl+Z/Y:Undo/Redo  R:Rebuild", lx, helpY + 78, s, { 0.65f, 0.7f, 0.75f, 0.8f });
+    DrawScreenText("Nav:  WASD/Arrows:Pan  Scroll:Zoom  MiddleMouse:Pan  E:Exit editor", lx, helpY + 96, s, { 0.55f, 0.6f, 0.65f, 0.7f });
 
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_STENCIL_TEST);
+    glEnable(GL_DEPTH_TEST); glEnable(GL_STENCIL_TEST);
 }

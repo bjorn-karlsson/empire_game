@@ -49,11 +49,64 @@ bool CampaignMap::IsPointPassable(const glm::vec3&pos)const{
     }
     return IsPointOnLand(pos);
 }
-bool CampaignMap::IsPointOnLand(const glm::vec3& pos)const {
+bool CampaignMap::IsPointOnLand(const glm::vec3& pos) const {
     glm::vec2 pt(pos.x, pos.z);
-    for (auto& p : m_provinces)if (PtInPoly(pt, p.borderVertices))return true;
-    for (auto& ft : m_foreignTerritories)if (PtInPoly(pt, ft.vertices))return true;
+    for (auto& p : m_provinces)
+        if (PtInPoly(pt, p.borderVertices)) return true;
     return false;
+}
+
+void CampaignMap::CreateProvince(const std::string& name, const std::string& cityName,
+    const std::string& owner, const std::vector<glm::vec3>& verts) {
+    Province p;
+    p.id = GetNextProvinceId();
+    p.name = name;
+    p.cityName = cityName;
+    p.ownerFactionId = owner;
+    p.borderVertices = verts;
+    glm::vec3 c(0);
+    for (auto& v : verts) c += v;
+    p.center = c / (float)verts.size();
+    p.cityPos = p.center;
+    p.baseIncome = 100;
+    p.population = 10000;
+    p.color = { 0.32f, 0.48f, 0.22f };
+    m_provinces.push_back(p);
+
+    // Add to faction ownership
+    Faction* f = GetFaction(owner);
+    if (f) f->ownedProvinces.push_back(p.id);
+
+    Logger::Info("Created province: %s (id=%d, owner=%s)", name.c_str(), p.id, owner.c_str());
+}
+
+void CampaignMap::DeleteProvince(int provinceIdx) {
+    if (provinceIdx < 0 || provinceIdx >= (int)m_provinces.size()) return;
+    Province& p = m_provinces[provinceIdx];
+
+    // Remove from faction
+    Faction* f = GetFaction(p.ownerFactionId);
+    if (f) {
+        auto& op = f->ownedProvinces;
+        op.erase(std::remove(op.begin(), op.end(), p.id), op.end());
+    }
+
+    // Remove from neighbor lists
+    int pid = p.id;
+    for (auto& other : m_provinces) {
+        auto& nids = other.neighborIds;
+        nids.erase(std::remove(nids.begin(), nids.end(), pid), nids.end());
+    }
+
+    Logger::Info("Deleted province: %s (id=%d)", p.name.c_str(), p.id);
+    m_provinces.erase(m_provinces.begin() + provinceIdx);
+}
+
+int CampaignMap::GetNextProvinceId() const {
+    int maxId = -1;
+    for (auto& p : m_provinces)
+        if (p.id > maxId) maxId = p.id;
+    return maxId + 1;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -686,6 +739,45 @@ void CampaignMap::GenerateTestMap() {
     m_provinces[28].cityPos = { 2.0f,0,9.5f };
 
     // ═══════════════════════════════════════════════════════════
+    // SURROUNDING NATIONS (as provinces, not foreign territories)
+    // ═══════════════════════════════════════════════════════════
+
+    // 29: Kingdom of England
+    m_provinces.push_back(mkP(29, "England", "London", "britain",
+        { V(-5.0f,-7.5f),V(-2.0f,-8.0f),V(0.5f,-7.5f),V(1.5f,-8.0f),
+         V(2.0f,-9.5f),V(-1.0f,-10.0f),V(-4.0f,-9.5f),V(-6.0f,-8.5f) },
+        400, true, true));
+    m_provinces[29].cityPos = { -1.5f, 0, -9.0f };
+
+    // 30: Hanover
+    m_provinces.push_back(mkP(30, "Hanover", "Hannover", "britain",
+        { V(5.5f,-7.0f),V(7.0f,-8.0f),V(9.0f,-8.5f),V(10.0f,-7.0f),
+         V(9.0f,-6.0f),V(8.0f,-5.0f),V(7.0f,-5.5f) },
+        200, false, false));
+    m_provinces[30].cityPos = { 8.0f, 0, -7.0f };
+
+    // 31: Austria (heartland)
+    m_provinces.push_back(mkP(31, "Austria", "Vienna", "austria",
+        { V(11.5f,-1.5f),V(13.0f,-2.0f),V(14.0f,0.0f),V(13.5f,2.0f),
+         V(12.5f,3.0f),V(11.5f,2.0f),V(10.5f,0.5f),V(11.0f,-0.5f) },
+        500, false, true));
+    m_provinces[31].cityPos = { 12.5f, 0, 0.5f };
+
+    // 32: Andalusia
+    m_provinces.push_back(mkP(32, "Andalusia", "Seville", "spain",
+        { V(-4.5f,11.5f),V(-1.5f,12.0f),V(2.0f,11.5f),V(4.0f,10.5f),
+         V(3.0f,13.0f),V(0.0f,14.0f),V(-3.0f,13.5f),V(-5.5f,12.5f) },
+        300, true, false, "arid"));
+    m_provinces[32].cityPos = { -1.0f, 0, 12.5f };
+
+    // 33: Kingdom of Naples
+    m_provinces.push_back(mkP(33, "Naples", "Naples", "papal",
+        { V(12.0f,8.5f),V(12.5f,7.0f),V(13.5f,7.5f),V(14.0f,9.0f),
+         V(13.5f,11.0f),V(12.0f,11.5f),V(11.0f,10.0f) },
+        250, true, false));
+    m_provinces[33].cityPos = { 12.8f, 0, 9.5f };
+
+    // ═══════════════════════════════════════════════════════════
     // FRENCH PROVINCE ADJACENCIES
     // ═══════════════════════════════════════════════════════════
     auto adj = [&](int a, int b) {
@@ -748,6 +840,14 @@ void CampaignMap::GenerateTestMap() {
     adj(26, 27);  // Galicia — Castile
     adj(27, 28);  // Castile — Aragon
 
+    adj(15, 30);  // Flanders — Hanover
+    adj(17, 30);  // Rhineland — Hanover
+    adj(19, 31);  // Bavaria — Austria
+    adj(23, 31);  // Venetia — Austria
+    adj(27, 32);  // Castile — Andalusia
+    adj(28, 32);  // Aragon — Andalusia
+    adj(25, 33);  // Papal States — Naples
+
     // ═══════════════════════════════════════════════════════════
     // TERRAIN OBSTACLES
     // ═══════════════════════════════════════════════════════════
@@ -799,42 +899,7 @@ void CampaignMap::GenerateTestMap() {
 
     for (auto& ob : m_obstacles)ob.center = Centroid(ob.vertices);
 
-    // ═══════════════════════════════════════════════════════════
-    // FOREIGN TERRITORIES (only truly off-map nations now)
-    // ═══════════════════════════════════════════════════════════
-    m_foreignTerritories.clear();
-
-    // England (across Channel — not a province, just rendered)
-    m_foreignTerritories.push_back({ "Kingdom of England",
-        {V(-5.0f,-7.5f),V(-2.0f,-8.0f),V(0.5f,-7.5f),V(1.5f,-8.0f),
-         V(2.0f,-9.5f),V(-1.0f,-10.0f),V(-4.0f,-9.5f),V(-6.0f,-8.5f)},
-        {},{0.40f,0.48f,0.32f} });
-
-    // Hanover / North Germany (off-map, just rendered)
-    m_foreignTerritories.push_back({ "Hanover",
-        {V(5.5f,-7.0f),V(7.0f,-8.0f),V(9.0f,-8.5f),V(10.0f,-7.0f),
-         V(9.0f,-6.0f),V(8.0f,-5.0f),V(7.0f,-5.5f)},
-        {},{0.48f,0.52f,0.38f} });
-
-    // Austria proper (far east, off-map)
-    m_foreignTerritories.push_back({ "Austria",
-        {V(11.5f,-1.5f),V(13.0f,-2.0f),V(14.0f,0.0f),V(13.5f,2.0f),
-         V(12.5f,3.0f),V(11.5f,2.0f),V(10.5f,0.5f),V(11.0f,-0.5f)},
-        {},{0.52f,0.48f,0.32f} });
-
-    // Southern Spain (off-map, Andalusia)
-    m_foreignTerritories.push_back({ "Andalusia",
-        {V(-4.5f,11.5f),V(-1.5f,12.0f),V(2.0f,11.5f),V(4.0f,10.5f),
-         V(3.0f,13.0f),V(0.0f,14.0f),V(-3.0f,13.5f),V(-5.5f,12.5f)},
-        {},{0.55f,0.48f,0.30f} });
-
-    // Naples / Southern Italy
-    m_foreignTerritories.push_back({ "Kingdom of Naples",
-        {V(12.0f,8.5f),V(12.5f,7.0f),V(13.5f,7.5f),V(14.0f,9.0f),
-         V(13.5f,11.0f),V(12.0f,11.5f),V(11.0f,10.0f)},
-        {},{0.52f,0.45f,0.30f} });
-
-    for (auto& ft : m_foreignTerritories)ft.center = Centroid(ft.vertices);
+    
 #undef V
 
     // ═══════════════════════════════════════════════════════════
@@ -871,6 +936,11 @@ void CampaignMap::GenerateTestMap() {
     assignProv("spain", 26);     // Galicia
     assignProv("spain", 27);     // Castile
     assignProv("spain", 28);     // Aragon
+    assignProv("britain", 29);  // England
+    assignProv("britain", 30);  // Hanover
+    assignProv("austria", 31);  // Austria heartland
+    assignProv("spain", 32);    // Andalusia
+    assignProv("papal", 33);    // Naples
 
     // ═══════════════════════════════════════════════════════════
     // BUILD NAV GRID
@@ -936,7 +1006,6 @@ void CampaignMap::ClearAll() {
     m_factions.clear();
     m_armies.clear();
     m_obstacles.clear();
-    m_foreignTerritories.clear();
     m_selectedArmyId = -1;
     m_selectedProvinceId = -1;
     m_nextArmyId = 0;

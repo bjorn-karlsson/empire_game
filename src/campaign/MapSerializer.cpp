@@ -101,19 +101,6 @@ bool MapSerializer::SaveToFile(const CampaignMap& map, const std::string& path) 
     }
     root["obstacles"] = obstacles;
 
-    // ── Foreign territories ──
-    json foreigns = json::array();
-    for (const auto& ft : map.GetForeignTerritories()) {
-        json fj;
-        fj["name"] = ft.name;
-        fj["color"] = color3ToJson(ft.color);
-        json verts = json::array();
-        for (const auto& v : ft.vertices)
-            verts.push_back(vec3ToJson(v));
-        fj["vertices"] = verts;
-        foreigns.push_back(fj);
-    }
-    root["foreignTerritories"] = foreigns;
 
     // ── Armies ──
     json armies = json::array();
@@ -256,21 +243,6 @@ bool MapSerializer::LoadFromFile(CampaignMap& map, const std::string& path) {
         }
     }
 
-    // ── Foreign territories ──
-    if (root.contains("foreignTerritories")) {
-        for (const auto& fj : root["foreignTerritories"]) {
-            ForeignTerritory ft;
-            ft.name = fj.value("name", "");
-            ft.color = jsonToColor3(fj["color"]);
-            for (const auto& vj : fj["vertices"])
-                ft.vertices.push_back(jsonToVec3(vj));
-            glm::vec3 c(0);
-            for (auto& v : ft.vertices) c += v;
-            if (!ft.vertices.empty()) c /= (float)ft.vertices.size();
-            ft.center = c;
-            map.AddForeignTerritory(ft);
-        }
-    }
 
     // ── Armies ──
     if (root.contains("armies")) {

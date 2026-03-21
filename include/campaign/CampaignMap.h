@@ -23,12 +23,6 @@ struct TerrainObstacle {
     glm::vec3 center, color;
 };
 
-// Foreign countries surrounding France (non-playable, just rendered)
-struct ForeignTerritory {
-    std::string name;
-    std::vector<glm::vec3> vertices;
-    glm::vec3 center, color;
-};
 
 // ─── Navigation Grid ──────────────────────────────────────────
 // 2D grid for A* pathfinding around obstacles.
@@ -62,18 +56,19 @@ public:
     void Update(float dt, const InputManager&);
     void ProcessTurn();
 
-
+    void CreateProvince(const std::string& name, const std::string& cityName,
+                       const std::string& owner, const std::vector<glm::vec3>& verts);
+    void DeleteProvince(int provinceIdx);
+    int GetNextProvinceId() const;
     // Mutable access for editor
     std::vector<Province>& GetProvincesEditable() { return m_provinces; }
     std::vector<TerrainObstacle>& GetObstaclesEditable() { return m_obstacles; }
-    std::vector<ForeignTerritory>& GetForeignTerritoriesEditable() { return m_foreignTerritories; }
 
     // For serialization
     void ClearAll();
     void AddFaction(const Faction& f) { m_factions.push_back(f); }
     void AddProvince(const Province& p) { m_provinces.push_back(p); }
     void AddObstacle(const TerrainObstacle& ob) { m_obstacles.push_back(ob); }
-    void AddForeignTerritory(const ForeignTerritory& ft) { m_foreignTerritories.push_back(ft); }
     void AddArmy(Army a);
     int GetNextArmyId() { return m_nextArmyId++; }
     int GetNextUnitId() { return m_nextUnitId++; }
@@ -100,7 +95,6 @@ public:
 
     // Terrain
     const std::vector<TerrainObstacle>& GetObstacles() const { return m_obstacles; }
-    const std::vector<ForeignTerritory>& GetForeignTerritories() const { return m_foreignTerritories; }
     bool IsPointPassable(const glm::vec3&) const;
     bool IsPointOnLand(const glm::vec3&) const;
     const NavGrid& GetNavGrid() const { return m_navGrid; }
@@ -190,7 +184,6 @@ private:
     std::vector<Faction> m_factions;
     std::vector<Army> m_armies;
     std::vector<TerrainObstacle> m_obstacles;
-    std::vector<ForeignTerritory> m_foreignTerritories;
     NavGrid m_navGrid;
 
     int m_nextArmyId=1, m_nextUnitId=1, m_currentTurn=1;

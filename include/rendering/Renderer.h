@@ -7,7 +7,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 class CampaignMap;class BattleScene;class Camera;class Shader;
-struct Province;struct TerrainObstacle;struct ForeignTerritory;
 
 struct ProvinceGPU{unsigned int VAO=0,VBO=0;int vertexCount=0;unsigned int borderVAO=0,borderVBO=0;int borderVertexCount=0;};
 struct ObstacleGPU{unsigned int VAO=0,VBO=0;int vertexCount=0;};
@@ -40,14 +39,12 @@ private:
     void InitShaders();
     void BuildProvinceGPU(const Province&);
     void BuildObstacleGPU(const TerrainObstacle&);
-    void BuildForeignGPU(const ForeignTerritory&);
     void BuildWaterPlane();void BuildArmyMarker();void BuildCircle();
     void BuildFontTexture();
 
-    void RenderObstacleStencil(const CampaignMap& map);
+    //void RenderObstacleStencil(const CampaignMap& map);
 
     void RenderWater();
-    void RenderForeignTerritories(const CampaignMap&);
     void RenderProvinces(const CampaignMap&);
     void RenderObstacles(const CampaignMap&);
     void RenderBorders(const CampaignMap&);
@@ -71,7 +68,6 @@ private:
     std::unique_ptr<Shader> m_textShader;
     std::unordered_map<int,ProvinceGPU> m_provinceGPUs;
     std::vector<ObstacleGPU> m_obstacleGPUs;
-    std::vector<ObstacleGPU> m_foreignGPUs;
     unsigned int m_waterVAO=0,m_waterVBO=0;
     unsigned int m_markerVAO=0,m_markerVBO=0;
     unsigned int m_cityVAO=0,m_cityVBO=0;

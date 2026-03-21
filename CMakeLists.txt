@@ -1,34 +1,26 @@
 cmake_minimum_required(VERSION 3.20)
 project(EmpireTotalStrategy VERSION 0.1.0 LANGUAGES CXX)
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ─── Dependencies ──────────────────────────────────────────────
-# You'll need to install these via vcpkg or manually:
-#   vcpkg install glfw3 glm glad stb
-# 
-# If using vcpkg, pass: -DCMAKE_TOOLCHAIN_FILE=[vcpkg root]/scripts/buildsystems/vcpkg.cmake
-
 find_package(glfw3 3.3 CONFIG REQUIRED)
 find_package(OpenGL REQUIRED)
-
-# GLM: newer vcpkg versions use CONFIG mode and the target is glm::glm-header-only
 find_package(glm CONFIG REQUIRED)
-
-# glad - if installed via vcpkg it should be findable, otherwise we bundle it
 find_package(glad CONFIG QUIET)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # ─── Source files ──────────────────────────────────────────────
 set(CORE_SOURCES
     src/core/Game.cpp
     src/core/InputManager.cpp
     src/core/ResourceManager.cpp
-)
+) 
 
 set(CAMPAIGN_SOURCES
     src/campaign/CampaignMap.cpp
+    src/campaign/MapSerializer.cpp
     src/campaign/Province.cpp
     src/campaign/Faction.cpp
     src/campaign/Army.cpp
@@ -57,6 +49,10 @@ set(UI_SOURCES
     src/ui/TopBar.cpp
 )
 
+set(EDITOR_SOURCES
+    src/editor/MapEditor.cpp
+)
+
 set(UTIL_SOURCES
     src/utils/Logger.cpp
     src/utils/MathUtils.cpp
@@ -70,6 +66,7 @@ add_executable(${PROJECT_NAME}
     ${BATTLE_SOURCES}
     ${RENDERING_SOURCES}
     ${UI_SOURCES}
+    ${EDITOR_SOURCES}
     ${UTIL_SOURCES}
 )
 
@@ -80,6 +77,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     glfw
     OpenGL::GL
+    nlohmann_json::nlohmann_json
 )
 
 # GLM: vcpkg may expose glm::glm or glm::glm-header-only depending on version
@@ -97,7 +95,7 @@ else()
     message(WARNING "glad not found via find_package. You may need to add it manually.")
 endif()
 
-# ─── Copy assets to build directory ───────────────────────────
+# ─── Copy assets/data/maps to build directory ─────────────────
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets
@@ -107,3 +105,17 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/data $<TARGET_FILE_DIR:${PROJECT_NAME}>/data
 )
+
+# Ensure maps folder exists in build dir and copy any map files
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+    $<TARGET_FILE_DIR:${PROJECT_NAME}>/maps
+)
+
+# Copy maps if the source folder exists
+if(EXISTS ${CMAKE_SOURCE_DIR}/maps)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/maps $<TARGET_FILE_DIR:${PROJECT_NAME}>/maps
+    )
+endif()

@@ -61,6 +61,23 @@ public:
     void Update(float dt, const InputManager&);
     void ProcessTurn();
 
+
+    // Mutable access for editor
+    std::vector<Province>& GetProvincesEditable() { return m_provinces; }
+    std::vector<TerrainObstacle>& GetObstaclesEditable() { return m_obstacles; }
+    std::vector<ForeignTerritory>& GetForeignTerritoriesEditable() { return m_foreignTerritories; }
+
+    // For serialization
+    void ClearAll();
+    void AddFaction(const Faction& f) { m_factions.push_back(f); }
+    void AddProvince(const Province& p) { m_provinces.push_back(p); }
+    void AddObstacle(const TerrainObstacle& ob) { m_obstacles.push_back(ob); }
+    void AddForeignTerritory(const ForeignTerritory& ft) { m_foreignTerritories.push_back(ft); }
+    void AddArmy(Army a);
+    int GetNextArmyId() { return m_nextArmyId++; }
+    int GetNextUnitId() { return m_nextUnitId++; }
+    void FinalizeLoad(); // called after loading: sets up ownership, builds nav grid
+
     // Terrain height at world position (matches shader displacement)
     float GetTerrainHeight(float x, float z) const;
     float GetBaseTerrainHeight(float x, float z) const;
@@ -148,8 +165,8 @@ public:
     void RecruitUnit(int,UnitType);
     std::vector<Army*> GetArmiesInProvince(int);
 
-private:
     void BuildNavGrid();
+private:
     void UpdateArmyPositions(float dt);
     void UpdateArmyProvince(Army&);
     void CheckForBattles(); // legacy, no longer auto-called

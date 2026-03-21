@@ -24,6 +24,12 @@ public:
     Camera*GetCamera(){return m_camera.get();}
     void OnResize(int,int);
 
+    void ClearMapGeometry();
+    void RenderEditorOverlay(const CampaignMap& map, int selProvIdx, int selVertIdx);
+    // Text rendering
+    void DrawScreenText(const std::string& text, float x, float y, float scale, glm::vec4 color);
+    void DrawWorldText(const std::string& text, glm::vec3 worldPos, float scale, glm::vec4 color);
+
 private:
     void InitShaders();
     void BuildProvinceGPU(const Province&);
@@ -50,9 +56,7 @@ private:
     void RenderExchangeModal(const CampaignMap&);
 
     void DrawScreenQuad(float x,float y,float w,float h,glm::vec4 color);
-    // Text rendering
-    void DrawScreenText(const std::string& text,float x,float y,float scale,glm::vec4 color);
-    void DrawWorldText(const std::string& text,glm::vec3 worldPos,float scale,glm::vec4 color);
+    
 
     int m_width,m_height;
     std::unique_ptr<Camera> m_camera;

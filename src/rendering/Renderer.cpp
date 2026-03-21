@@ -1475,3 +1475,79 @@ void Renderer::RenderBattle(const BattleScene& battle){
     glEnable(GL_DEPTH_TEST);glEnable(GL_STENCIL_TEST);
 }
 void Renderer::OnResize(int w,int h){m_width=w;m_height=h;glViewport(0,0,w,h);if(m_camera)m_camera->OnResize((float)w/h);}
+
+
+void Renderer::ClearMapGeometry() {
+    for (auto& [id, g] : m_provinceGPUs) {
+        if (g.VAO) glDeleteVertexArrays(1, &g.VAO);
+        if (g.VBO) glDeleteBuffers(1, &g.VBO);
+        if (g.borderVAO) glDeleteVertexArrays(1, &g.borderVAO);
+        if (g.borderVBO) glDeleteBuffers(1, &g.borderVBO);
+    }
+    m_provinceGPUs.clear();
+    for (auto& g : m_obstacleGPUs) {
+        if (g.VAO) glDeleteVertexArrays(1, &g.VAO);
+        if (g.VBO) glDeleteBuffers(1, &g.VBO);
+    }
+    m_obstacleGPUs.clear();
+    for (auto& g : m_foreignGPUs) {
+        if (g.VAO) glDeleteVertexArrays(1, &g.VAO);
+        if (g.VBO) glDeleteBuffers(1, &g.VBO);
+    }
+    m_foreignGPUs.clear();
+}
+
+void Renderer::RenderEditorOverlay(const CampaignMap& map, int selProvIdx, int selVertIdx) {
+    glDisable(GL_DEPTH_TEST);
+    m_overlayShader->Use();
+    m_overlayShader->SetMat4("u_VP", m_camera->GetViewProjectionMatrix());
+
+    auto& provs = map.GetProvinces();
+
+    // Draw all vertices as small dots
+    for (int pi = 0; pi < (int)provs.size(); pi++) {
+        for (int vi = 0; vi < (int)provs[pi].borderVertices.size(); vi++) {
+            glm::vec3 v = provs[pi].borderVertices[vi];
+            float th = map.GetBaseTerrainHeight(v.x, v.z);
+            glm::vec3 pos(v.x, th + 0.15f, v.z);
+
+            bool isSelected = (pi == selProvIdx && vi == selVertIdx);
+            bool isProvSelected = (pi == selProvIdx);
+            float size = isSelected ? 0.12f : 0.06f;
+
+            glm::mat4 model = glm::translate(glm::mat4(1), pos);
+            model = glm::scale(model, glm::vec3(size));
+            m_overlayShader->SetMat4("u_Model", model);
+
+            if (isSelected)
+                m_overlayShader->SetVec4("u_Color", {1.0f, 0.2f, 0.2f, 1.0f});
+            else if (isProvSelected)
+                m_overlayShader->SetVec4("u_Color", {1.0f, 0.8f, 0.2f, 0.9f});
+            else
+                m_overlayShader->SetVec4("u_Color", {0.3f, 0.9f, 0.3f, 0.6f});
+
+            glBindVertexArray(m_circleVAO);
+            glLineWidth(isSelected ? 4.0f : 2.0f);
+            glDrawArrays(GL_LINE_STRIP, 0, m_circleVerts);
+        }
+    }
+
+    // Draw obstacle vertices too (grey)
+    for (const auto& ob : map.GetObstacles()) {
+        for (const auto& v : ob.vertices) {
+            float th = map.GetTerrainHeight(v.x, v.z);
+            glm::vec3 pos(v.x, th + 0.15f, v.z);
+            glm::mat4 model = glm::translate(glm::mat4(1), pos);
+            model = glm::scale(model, glm::vec3(0.05f));
+            m_overlayShader->SetMat4("u_Model", model);
+            m_overlayShader->SetVec4("u_Color", {0.7f, 0.7f, 0.7f, 0.5f});
+            glBindVertexArray(m_circleVAO);
+            glLineWidth(1.5f);
+            glDrawArrays(GL_LINE_STRIP, 0, m_circleVerts);
+        }
+    }
+
+    glBindVertexArray(0);
+    glLineWidth(1);
+    glEnable(GL_DEPTH_TEST);
+}

@@ -1,84 +1,57 @@
-// ============================================================================
-// Game.cpp — Core game loop and subsystem orchestration
-// ============================================================================
-
-// OpenGL loader — MUST be first include
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
-
+// ═══════════════════════════════════════════════════════════════
+// Game.cpp — Main game loop, input, state machine, editor
+// ═══════════════════════════════════════════════════════════════
 #include "core/Game.h"
 #include "core/InputManager.h"
 #include "rendering/Renderer.h"
 #include "rendering/Camera.h"
 #include "campaign/CampaignMap.h"
-#include "campaign/TurnManager.h"
+#include "campaign/MapSerializer.h"
 #include "battle/BattleScene.h"
+#include "campaign/TurnManager.h"
 #include "ui/UIManager.h"
 #include "utils/Logger.h"
+#include <GLFW/glfw3.h>
 
-// ─── Window resize callback ──────────────────────────────────
 static Game* g_gameInstance = nullptr;
 
-static void framebufferSizeCallback(GLFWwindow* window, int width, int height)
-{
-    if(width<=0||height<=0)return;
-    glViewport(0, 0, width, height);
-    if(g_gameInstance){
-        g_gameInstance->GetRenderer()->OnResize(width,height);
-        // Update stored dimensions
-        // (accessed via the Game pointer trick below)
-    }
-}
-
-// ─── Constructor / Destructor ─────────────────────────────────
 Game::Game() = default;
-Game::~Game() = default;
+Game::~Game() { Shutdown(); }
 
 // ─── Initialization ───────────────────────────────────────────
 bool Game::Init(int width, int height, const std::string& title)
 {
-    m_windowWidth  = width;
-    m_windowHeight = height;
+    Logger::Info("Initializing game: %s (%dx%d)", title.c_str(), width, height);
 
-    // --- GLFW ---
-    if (!glfwInit()) {
-        Logger::Error("Failed to initialize GLFW");
-        return false;
-    }
+    if (!glfwInit()) { Logger::Error("GLFW init failed"); return false; }
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_SAMPLES, 4); // MSAA
+    glfwWindowHint(GLFW_SAMPLES, 4);
 
     m_window = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
-    if (!m_window) {
-        Logger::Error("Failed to create GLFW window");
-        glfwTerminate();
-        return false;
-    }
+    if (!m_window) { Logger::Error("Window creation failed"); glfwTerminate(); return false; }
 
     glfwMakeContextCurrent(m_window);
-    glfwSetFramebufferSizeCallback(m_window, framebufferSizeCallback);
-    glfwSwapInterval(1); // VSync
+    glfwSwapInterval(1);
 
-    // --- Load OpenGL functions via glad ---
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        Logger::Error("Failed to initialize GLAD");
-        return false;
+        Logger::Error("Failed to initialize GLAD"); return false;
     }
 
-    Logger::Info("OpenGL context created: %dx%d", width, height);
+    m_windowWidth = width; m_windowHeight = height;
+    glfwGetFramebufferSize(m_window, &m_windowWidth, &m_windowHeight);
 
     // --- Create subsystems ---
     g_gameInstance = this;
 
-    m_input       = std::make_unique<InputManager>(m_window);
-    m_renderer    = std::make_unique<Renderer>(width, height);
+    m_input = std::make_unique<InputManager>(m_window);
+    m_renderer = std::make_unique<Renderer>(width, height);
     m_campaignMap = std::make_unique<CampaignMap>();
     m_turnManager = std::make_unique<TurnManager>();
     m_battleScene = std::make_unique<BattleScene>();
-    m_ui          = std::make_unique<UIManager>();
+    m_ui = std::make_unique<UIManager>();
 
     // --- Initialize subsystems ---
     if (!m_renderer->Init()) {
@@ -86,10 +59,12 @@ bool Game::Init(int width, int height, const std::string& title)
         return false;
     }
 
-    // Load the default campaign (18th century Europe)
-    if (!m_campaignMap->LoadFromFile("data/europe_campaign.json")) {
-        Logger::Warning("No campaign data found — using default test map");
+    // Load map from JSON, fall back to hardcoded test map
+    if (!MapSerializer::LoadFromFile(*m_campaignMap, "maps/europe_1700.json")) {
+        Logger::Warning("No map file found — using generated test map");
         m_campaignMap->GenerateTestMap();
+        // Export the generated map so we have a JSON to edit
+        MapSerializer::ExportCurrentMap(*m_campaignMap, "maps/europe_1700.json");
     }
 
     m_turnManager->Init(m_campaignMap.get());
@@ -99,7 +74,7 @@ bool Game::Init(int width, int height, const std::string& title)
     m_renderer->BuildMapGeometry(*m_campaignMap);
 
     // Start on campaign map
-    m_state   = GameState::CAMPAIGN_MAP;
+    m_state = GameState::CAMPAIGN_MAP;
     m_running = true;
 
     Logger::Info("Game initialized successfully!");
@@ -107,24 +82,22 @@ bool Game::Init(int width, int height, const std::string& title)
 }
 
 // ─── Main Game Loop ───────────────────────────────────────────
-// Classic fixed-timestep loop. Update logic runs at consistent
-// rate regardless of frame rate, rendering happens as fast as possible.
 void Game::Run()
 {
     Logger::Info("Entering main game loop...");
 
     while (m_running && !glfwWindowShouldClose(m_window)) {
         float currentTime = static_cast<float>(glfwGetTime());
-        float deltaTime   = currentTime - m_lastFrameTime;
-        m_lastFrameTime   = currentTime;
+        float deltaTime = currentTime - m_lastFrameTime;
+        m_lastFrameTime = currentTime;
         if (deltaTime > 0.1f) deltaTime = 0.1f;
 
         // Sync window dimensions each frame
-        int fw,fh;
-        glfwGetFramebufferSize(m_window,&fw,&fh);
-        if(fw>0&&fh>0&&(fw!=m_windowWidth||fh!=m_windowHeight)){
-            m_windowWidth=fw;m_windowHeight=fh;
-            m_renderer->OnResize(fw,fh);
+        int fw, fh;
+        glfwGetFramebufferSize(m_window, &fw, &fh);
+        if (fw > 0 && fh > 0 && (fw != m_windowWidth || fh != m_windowHeight)) {
+            m_windowWidth = fw; m_windowHeight = fh;
+            m_renderer->OnResize(fw, fh);
         }
 
         ProcessInput();
@@ -143,9 +116,17 @@ void Game::ProcessInput()
 
     // Global keybinds
     if (m_input->IsKeyPressed(GLFW_KEY_ESCAPE)) {
-        if (m_state == GameState::PAUSED) {
+        if (m_campaignMap->IsExchangeOpen()) {
+            m_campaignMap->CancelExchange();
+        }
+        else if (m_editor.isActive) {
+            m_editor.Toggle();
+            Logger::Info("Editor: OFF");
+        }
+        else if (m_state == GameState::PAUSED) {
             m_state = GameState::CAMPAIGN_MAP;
-        } else if (m_state == GameState::CAMPAIGN_MAP) {
+        }
+        else if (m_state == GameState::CAMPAIGN_MAP) {
             m_state = GameState::PAUSED;
         }
     }
@@ -153,6 +134,23 @@ void Game::ProcessInput()
     // Debug: quick exit
     if (m_input->IsKeyDown(GLFW_KEY_LEFT_ALT) && m_input->IsKeyPressed(GLFW_KEY_F4)) {
         m_running = false;
+    }
+
+    // Toggle editor with E key
+    if (m_input->IsKeyPressed(GLFW_KEY_E) && m_state == GameState::CAMPAIGN_MAP
+        && m_turnPhase == TurnExecPhase::IDLE && !m_campaignMap->IsExchangeOpen()) {
+        m_editor.Toggle();
+        Logger::Info("Editor: %s", m_editor.isActive ? "ON" : "OFF");
+    }
+
+    // Editor key handling (1/2/3 tools, S save, L load, R rebuild)
+    if (m_editor.isActive && m_state == GameState::CAMPAIGN_MAP) {
+        if (m_input->IsKeyPressed(GLFW_KEY_1)) m_editor.HandleKeyPress(GLFW_KEY_1, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_2)) m_editor.HandleKeyPress(GLFW_KEY_2, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_3)) m_editor.HandleKeyPress(GLFW_KEY_3, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_S)) m_editor.HandleKeyPress(GLFW_KEY_S, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_L)) m_editor.HandleKeyPress(GLFW_KEY_L, *m_campaignMap, *m_renderer);
+        if (m_input->IsKeyPressed(GLFW_KEY_R)) m_editor.HandleKeyPress(GLFW_KEY_R, *m_campaignMap, *m_renderer);
     }
 
     // ─── Camera controls (only on campaign map) ──────────────
@@ -172,6 +170,14 @@ void Game::ProcessInput()
             if (m_input->IsKeyDown(GLFW_KEY_S) || m_input->IsKeyDown(GLFW_KEY_DOWN))  panZ += dt;
             if (m_input->IsKeyDown(GLFW_KEY_A) || m_input->IsKeyDown(GLFW_KEY_LEFT))  panX -= dt;
             if (m_input->IsKeyDown(GLFW_KEY_D) || m_input->IsKeyDown(GLFW_KEY_RIGHT)) panX += dt;
+            // Don't pan with S key when editor is active (S = save)
+            if (m_editor.isActive) {
+                panZ = 0; panX = 0;
+                if (m_input->IsKeyDown(GLFW_KEY_W) || m_input->IsKeyDown(GLFW_KEY_UP))    panZ -= dt;
+                if (m_input->IsKeyDown(GLFW_KEY_DOWN))  panZ += dt;
+                if (m_input->IsKeyDown(GLFW_KEY_LEFT))  panX -= dt;
+                if (m_input->IsKeyDown(GLFW_KEY_RIGHT)) panX += dt;
+            }
             if (panX != 0.0f || panZ != 0.0f)
                 cam->Pan(panX, panZ);
         }
@@ -187,6 +193,47 @@ void Game::ProcessInput()
         if (scroll != 0.0f)
             cam->Zoom(scroll);
 
+        // ── EDITOR MODE: intercept mouse input ──
+        if (m_editor.isActive && !executing) {
+            // Left click
+            if (m_input->IsMouseButtonPressed(0)) {
+                glm::vec2 mousePos = m_input->GetMousePos();
+                glm::vec3 worldPos = cam->ScreenToWorldPlane(
+                    mousePos.x, mousePos.y,
+                    (float)m_windowWidth, (float)m_windowHeight);
+                m_editor.HandleLeftClick(worldPos, *m_campaignMap);
+            }
+
+            // Left release — finish drag, rebuild geometry
+            if (m_input->IsMouseButtonReleased(0) && m_editor.isDragging) {
+                m_editor.HandleLeftRelease(*m_campaignMap);
+                m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
+            }
+
+            // Drag while held
+            if (m_input->IsMouseButtonDown(0) && m_editor.isDragging) {
+                glm::vec2 mousePos = m_input->GetMousePos();
+                glm::vec3 worldPos = cam->ScreenToWorldPlane(
+                    mousePos.x, mousePos.y,
+                    (float)m_windowWidth, (float)m_windowHeight);
+                m_editor.HandleDrag(worldPos, *m_campaignMap);
+            }
+
+            // Right click (delete vertex in delete mode)
+            if (m_input->IsMouseButtonPressed(1)) {
+                glm::vec2 mousePos = m_input->GetMousePos();
+                glm::vec3 worldPos = cam->ScreenToWorldPlane(
+                    mousePos.x, mousePos.y,
+                    (float)m_windowWidth, (float)m_windowHeight);
+                m_editor.HandleRightClick(worldPos, *m_campaignMap);
+                m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
+            }
+
+            return; // Don't process normal game clicks while in editor
+        }
+
+        // ── NORMAL GAME MODE ──
+
         // Left click → SELECT objects (or exchange modal interaction)
         if (m_input->IsMouseButtonPressed(0) && !executing) {
             glm::vec2 mousePos = m_input->GetMousePos();
@@ -194,11 +241,11 @@ void Game::ProcessInput()
                 m_campaignMap->HandleExchangeClick(
                     mousePos.x, mousePos.y,
                     (float)m_windowWidth, (float)m_windowHeight);
-            } else {
+            }
+            else {
                 glm::vec3 worldPos = cam->ScreenToWorldPlane(
                     mousePos.x, mousePos.y,
-                    (float)m_windowWidth, (float)m_windowHeight
-                );
+                    (float)m_windowWidth, (float)m_windowHeight);
                 m_campaignMap->HandleLeftClick(worldPos);
             }
         }
@@ -208,14 +255,8 @@ void Game::ProcessInput()
             glm::vec2 mousePos = m_input->GetMousePos();
             glm::vec3 worldPos = cam->ScreenToWorldPlane(
                 mousePos.x, mousePos.y,
-                (float)m_windowWidth, (float)m_windowHeight
-            );
+                (float)m_windowWidth, (float)m_windowHeight);
             m_campaignMap->HandleRightClick(worldPos);
-        }
-
-        // Escape closes exchange modal
-        if (m_input->IsKeyPressed(GLFW_KEY_ESCAPE) && m_campaignMap->IsExchangeOpen()) {
-            m_campaignMap->CancelExchange();
         }
     }
 }
@@ -224,14 +265,14 @@ void Game::ProcessInput()
 void Game::Update(float deltaTime)
 {
     Camera* cam = m_renderer->GetCamera();
-    if (cam) cam->Update(deltaTime);
     if (cam) {
         cam->Update(deltaTime);
         // Prevent camera from going underground
         float minDist = 3.0f;
         if (cam->GetDistance() < minDist) cam->SetDistance(minDist);
     }
-    // Safety timer to prevent freeze
+
+    // Safety timer to prevent freeze during turn execution
     static float safetyTimer = 0;
     if (m_turnPhase != TurnExecPhase::IDLE) {
         safetyTimer += deltaTime;
@@ -241,20 +282,24 @@ void Game::Update(float deltaTime)
             m_campaignMap->ProcessTurn();
             m_turnPhase = TurnExecPhase::IDLE;
             m_cameraLocked = false;
-            if(cam && m_savedCamDist > 0) cam->SetDistance(m_savedCamDist);
+            if (cam && m_savedCamDist > 0) cam->SetDistance(m_savedCamDist);
             safetyTimer = 0;
         }
-    } else { safetyTimer = 0; }
+    }
+    else { safetyTimer = 0; }
 
     switch (m_state) {
     case GameState::CAMPAIGN_MAP:
     {
+        // ── IDLE: normal gameplay ──
         if (m_turnPhase == TurnExecPhase::IDLE) {
             m_campaignMap->Update(deltaTime, *m_input);
             m_ui->Update(deltaTime, *m_input);
 
-            if (m_ui->IsEndTurnButtonClicked() || m_input->IsKeyPressed(GLFW_KEY_SPACE) ||
-                m_input->IsKeyPressed(GLFW_KEY_ENTER)) {
+            // End Turn trigger (don't trigger during editor mode)
+            if (!m_editor.isActive &&
+                (m_ui->IsEndTurnButtonClicked() || m_input->IsKeyPressed(GLFW_KEY_SPACE) ||
+                    m_input->IsKeyPressed(GLFW_KEY_ENTER))) {
                 m_ui->ClearEndTurnClick();
                 m_campaignMap->StopAllArmies();
                 m_turnPhase = TurnExecPhase::PLAYER_MOVES;
@@ -372,6 +417,7 @@ void Game::Update(float deltaTime)
             }
         }
 
+        // Check for pending battles (any phase)
         if (m_campaignMap->HasPendingBattle()) {
             auto battleData = m_campaignMap->GetPendingBattle();
             m_battleScene->Setup(battleData, *m_campaignMap);
@@ -381,32 +427,33 @@ void Game::Update(float deltaTime)
         }
         break;
     }
-        case GameState::BATTLE:
-            m_battleScene->Update(deltaTime, *m_input);
-            if (m_input->IsMouseButtonPressed(0)) {
-                glm::vec2 mp = m_input->GetMousePos();
-                m_battleScene->HandleClick(mp.x, mp.y, (float)m_windowWidth, (float)m_windowHeight);
-            }
-            if (m_battleScene->IsFinished()) {
-                m_campaignMap->ApplyBattleResult(m_battleScene->GetResult());
-                m_state = GameState::CAMPAIGN_MAP;
 
-                // Follow the retreating army (if any) before resuming AI
-                m_followArmyId = -1;
-                for (const auto& a : m_campaignMap->GetArmies()) {
-                    if (a.isMoving) {
-                        m_followArmyId = a.id;
-                        if (cam) { cam->SetTarget(a.worldPosition + glm::vec3(0, 0, 1)); cam->SetDistance(12); }
-                        m_turnExecTimer = 0;
-                        break;
-                    }
+    case GameState::BATTLE:
+        m_battleScene->Update(deltaTime, *m_input);
+        if (m_input->IsMouseButtonPressed(0)) {
+            glm::vec2 mp = m_input->GetMousePos();
+            m_battleScene->HandleClick(mp.x, mp.y, (float)m_windowWidth, (float)m_windowHeight);
+        }
+        if (m_battleScene->IsFinished()) {
+            m_campaignMap->ApplyBattleResult(m_battleScene->GetResult());
+            m_state = GameState::CAMPAIGN_MAP;
+
+            // Follow the retreating army (if any) before resuming AI
+            m_followArmyId = -1;
+            for (const auto& a : m_campaignMap->GetArmies()) {
+                if (a.isMoving) {
+                    m_followArmyId = a.id;
+                    if (cam) { cam->SetTarget(a.worldPosition + glm::vec3(0, 0, 1)); cam->SetDistance(12); }
+                    m_turnExecTimer = 0;
+                    break;
                 }
             }
-            break;
+        }
+        break;
 
-        case GameState::PAUSED: break;
-        case GameState::MAIN_MENU: break;
-        default: break;
+    case GameState::PAUSED: break;
+    case GameState::MAIN_MENU: break;
+    default: break;
     }
 }
 
@@ -416,27 +463,35 @@ void Game::Render()
     m_renderer->BeginFrame();
 
     switch (m_state) {
-        case GameState::CAMPAIGN_MAP:
-            m_renderer->RenderCampaignMap(*m_campaignMap);
-            m_ui->Render(*m_renderer);
-            break;
+    case GameState::CAMPAIGN_MAP:
+        m_renderer->RenderCampaignMap(*m_campaignMap);
 
-        case GameState::BATTLE:
-            m_renderer->RenderCampaignMap(*m_campaignMap); // map visible behind
-            m_renderer->RenderBattle(*m_battleScene);      // battle UI overlay
-            break;
+        // Editor overlay: vertex dots + status text
+        if (m_editor.isActive) {
+            m_renderer->RenderEditorOverlay(*m_campaignMap,
+                m_editor.selectedProvinceIdx, m_editor.selectedVertexIdx);
+            m_renderer->DrawScreenText(m_editor.GetStatusText(),
+                10, 40, 1.0f, { 1.0f, 1.0f, 0.5f, 1.0f });
+        }
 
-        case GameState::PAUSED:
-            m_renderer->RenderCampaignMap(*m_campaignMap);
-            m_ui->RenderPauseOverlay(*m_renderer);
-            break;
+        m_ui->Render(*m_renderer);
+        break;
 
-        case GameState::MAIN_MENU:
-            // TODO: render menu
-            break;
+    case GameState::BATTLE:
+        m_renderer->RenderCampaignMap(*m_campaignMap);
+        m_renderer->RenderBattle(*m_battleScene);
+        break;
 
-        default:
-            break;
+    case GameState::PAUSED:
+        m_renderer->RenderCampaignMap(*m_campaignMap);
+        m_ui->RenderPauseOverlay(*m_renderer);
+        break;
+
+    case GameState::MAIN_MENU:
+        break;
+
+    default:
+        break;
     }
 
     m_renderer->EndFrame();
@@ -447,7 +502,6 @@ void Game::Shutdown()
 {
     Logger::Info("Shutting down...");
 
-    // Subsystems are cleaned up by unique_ptr destructors
     m_ui.reset();
     m_battleScene.reset();
     m_turnManager.reset();

@@ -927,6 +927,47 @@ void CampaignMap::GenerateTestMap() {
     Logger::Info("Campaign: %d provinces, %d factions, %d armies, %d obstacles",
         (int)m_provinces.size(), (int)m_factions.size(), (int)m_armies.size(), (int)m_obstacles.size());
 }
+
+
+void CampaignMap::ClearAll() {
+    m_provinces.clear();
+    m_factions.clear();
+    m_armies.clear();
+    m_obstacles.clear();
+    m_foreignTerritories.clear();
+    m_selectedArmyId = -1;
+    m_selectedProvinceId = -1;
+    m_nextArmyId = 0;
+    m_nextUnitId = 0;
+}
+
+void CampaignMap::AddArmy(Army a) {
+    int aid = a.id;
+    std::string fid = a.factionId;
+    Province* p = GetProvinceAtWorldPos(a.worldPosition);
+    a.currentProvinceId = p ? p->id : -1;
+    m_armies.push_back(std::move(a));
+    Faction* f = GetFaction(fid);
+    if (f) f->armyIds.push_back(aid);
+}
+
+void CampaignMap::FinalizeLoad() {
+    // Setup faction ownership from province data
+    for (auto& f : m_factions) {
+        f.ownedProvinces.clear();
+        f.capitalProvinceId = -1;
+    }
+    for (const auto& p : m_provinces) {
+        Faction* f = GetFaction(p.ownerFactionId);
+        if (f) {
+            f->ownedProvinces.push_back(p.id);
+            if (p.isCapital) f->capitalProvinceId = p.id;
+        }
+    }
+    BuildNavGrid();
+    Logger::Info("Map finalized: nav grid built");
+}
+
 // ═══════════════════════════════════════════════════════════════
 // INPUT
 // ═══════════════════════════════════════════════════════════════

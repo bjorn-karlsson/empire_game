@@ -1,11 +1,9 @@
 // ═══════════════════════════════════════════════════════════════
 // Game.cpp — Main game loop, input, state machine, editor
 // ═══════════════════════════════════════════════════════════════
-
 #include <glad/glad.h>
 #include "core/Game.h"
 #include "core/InputManager.h"
-
 #include "rendering/Renderer.h"
 #include "rendering/Camera.h"
 #include "campaign/CampaignMap.h"
@@ -59,7 +57,6 @@ bool Game::Init(int width, int height, const std::string& title)
         return false;
     }
 
-    // Load map from JSON, fall back to hardcoded test map
     if (!MapSerializer::LoadFromFile(*m_campaignMap, "maps/europe_1700.json")) {
         Logger::Warning("No map file found — using generated test map");
         m_campaignMap->GenerateTestMap();
@@ -128,14 +125,14 @@ void Game::ProcessInput()
         m_running = false;
     }
 
-    // Toggle editor with E key (only when idle, no exchange open)
+    // Toggle editor
     if (m_input->IsKeyPressed(GLFW_KEY_E) && m_state == GameState::CAMPAIGN_MAP
         && m_turnPhase == TurnExecPhase::IDLE && !m_campaignMap->IsExchangeOpen()) {
         m_editor.Toggle();
         Logger::Info("Editor: %s", m_editor.isActive ? "ON" : "OFF");
     }
 
-    // ── Editor key handling ──
+    // Editor keys
     if (m_editor.isActive && m_state == GameState::CAMPAIGN_MAP) {
         if (m_input->IsKeyPressed(GLFW_KEY_1)) m_editor.HandleKeyPress(GLFW_KEY_1, *m_campaignMap, *m_renderer);
         if (m_input->IsKeyPressed(GLFW_KEY_2)) m_editor.HandleKeyPress(GLFW_KEY_2, *m_campaignMap, *m_renderer);
@@ -147,7 +144,7 @@ void Game::ProcessInput()
         if (m_input->IsKeyPressed(GLFW_KEY_R)) m_editor.HandleKeyPress(GLFW_KEY_R, *m_campaignMap, *m_renderer);
     }
 
-    // ─── Camera + game input (campaign map only) ──────────────
+    // ─── Camera + game input ──────────────
     if (m_state == GameState::CAMPAIGN_MAP) {
         Camera* cam = m_renderer->GetCamera();
         if (!cam) return;
@@ -155,7 +152,7 @@ void Game::ProcessInput()
         bool executing = (m_turnPhase != TurnExecPhase::IDLE);
         float dt = 0.016f;
 
-        // Camera pan — arrow keys always, WASD only when editor is off
+        // Camera pan
         if (!executing) {
             float panX = 0.0f, panZ = 0.0f;
             if (m_input->IsKeyDown(GLFW_KEY_UP))    panZ -= dt;
@@ -172,39 +169,41 @@ void Game::ProcessInput()
                 cam->Pan(panX, panZ);
         }
 
-        // Middle mouse drag pan
         if (m_input->IsMouseButtonDown(2)) {
             glm::vec2 delta = m_input->GetMouseDelta();
             cam->Pan(-delta.x * dt * 0.3f, -delta.y * dt * 0.3f);
         }
 
-        // Scroll zoom
         float scroll = m_input->GetScrollDelta();
         if (scroll != 0.0f) cam->Zoom(scroll);
 
         // ══════════════════════════════════════════════════════
-        // EDITOR MODE MOUSE INPUT
+        // EDITOR MODE
         // ══════════════════════════════════════════════════════
         if (m_editor.isActive && !executing) {
+            // Feed VP matrix + screen size to editor for screen-space picking
+            m_editor.SetScreenInfo(cam->GetViewProjectionMatrix(),
+                (float)m_windowWidth, (float)m_windowHeight);
+
             glm::vec2 mousePos = m_input->GetMousePos();
             glm::vec3 worldPos = cam->ScreenToWorldPlane(
                 mousePos.x, mousePos.y, (float)m_windowWidth, (float)m_windowHeight);
 
-            // Hover tracking every frame
-            m_editor.HandleMouseMove(worldPos, *m_campaignMap);
+            // Hover (every frame)
+            m_editor.HandleMouseMove(mousePos, *m_campaignMap);
 
             // Left click
             if (m_input->IsMouseButtonPressed(0)) {
-                m_editor.HandleLeftClick(worldPos, *m_campaignMap);
+                m_editor.HandleLeftClick(worldPos, mousePos, *m_campaignMap);
             }
 
-            // Drag while held
+            // Drag
             if (m_input->IsMouseButtonDown(0) &&
                 (m_editor.isDragging || m_editor.isDraggingObstacle || m_editor.isDraggingCity)) {
                 m_editor.HandleDrag(worldPos, *m_campaignMap);
             }
 
-            // Left release — finish drag, rebuild
+            // Release
             if (m_input->IsMouseButtonReleased(0)) {
                 if (m_editor.isDragging || m_editor.isDraggingObstacle || m_editor.isDraggingCity) {
                     m_editor.HandleLeftRelease(*m_campaignMap);
@@ -215,19 +214,19 @@ void Game::ProcessInput()
                 }
             }
 
-            // Right click (delete vertex)
+            // Right click
             if (m_input->IsMouseButtonPressed(1)) {
-                m_editor.HandleRightClick(worldPos, *m_campaignMap);
+                m_editor.HandleRightClick(worldPos, mousePos, *m_campaignMap);
                 if (m_editor.geometryDirty) {
                     m_editor.RebuildGeometry(*m_campaignMap, *m_renderer);
                 }
             }
 
-            return; // Don't process normal game clicks in editor
+            return;
         }
 
         // ══════════════════════════════════════════════════════
-        // NORMAL GAME MOUSE INPUT
+        // NORMAL GAME
         // ══════════════════════════════════════════════════════
         if (m_input->IsMouseButtonPressed(0) && !executing) {
             glm::vec2 mousePos = m_input->GetMousePos();
@@ -461,11 +460,8 @@ void Game::Render()
         m_ui->RenderPauseOverlay(*m_renderer);
         break;
 
-    case GameState::MAIN_MENU:
-        break;
-
-    default:
-        break;
+    case GameState::MAIN_MENU: break;
+    default: break;
     }
 
     m_renderer->EndFrame();

@@ -7,18 +7,40 @@
 #include <algorithm>
 
 // ═══════════════════════════════════════════════════════════════
-// HIT TESTING
+// SCREEN-SPACE PROJECTION
 // ═══════════════════════════════════════════════════════════════
 
-MapEditor::HitResult MapEditor::FindNearestVertex(const glm::vec3& worldPos, const CampaignMap& map, float maxDist) {
+void MapEditor::SetScreenInfo(const glm::mat4& vpMatrix, float screenW, float screenH) {
+    m_vpMatrix = vpMatrix;
+    m_screenW = screenW;
+    m_screenH = screenH;
+}
+
+glm::vec2 MapEditor::WorldToScreen(const glm::vec3& worldPos) const {
+    // Get terrain height so vertices project from their visible position
+    glm::vec4 clip = m_vpMatrix * glm::vec4(worldPos, 1.0f);
+    if (clip.w <= 0.001f) return { -9999, -9999 }; // behind camera
+    glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    float sx = (ndc.x * 0.5f + 0.5f) * m_screenW;
+    float sy = (1.0f - (ndc.y * 0.5f + 0.5f)) * m_screenH;
+    return { sx, sy };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HIT TESTING (screen-space pixel distances)
+// ═══════════════════════════════════════════════════════════════
+
+MapEditor::HitResult MapEditor::FindNearestVertex(const glm::vec2& mousePixel, const CampaignMap& map, float maxPx) {
     HitResult best;
-    glm::vec2 click(worldPos.x, worldPos.z);
     auto& provs = map.GetProvinces();
     for (int pi = 0; pi < (int)provs.size(); pi++) {
         for (int vi = 0; vi < (int)provs[pi].borderVertices.size(); vi++) {
-            glm::vec2 vp(provs[pi].borderVertices[vi].x, provs[pi].borderVertices[vi].z);
-            float d = glm::distance(click, vp);
-            if (d < best.dist && d < maxDist) {
+            auto& v = provs[pi].borderVertices[vi];
+            // Project vertex at terrain height for accurate screen position
+            float th = map.GetTerrainHeight(v.x, v.z);
+            glm::vec2 sp = WorldToScreen({ v.x, th + 0.2f, v.z });
+            float d = glm::distance(mousePixel, sp);
+            if (d < best.dist && d < maxPx) {
                 best = { pi, vi, d };
             }
         }
@@ -26,15 +48,16 @@ MapEditor::HitResult MapEditor::FindNearestVertex(const glm::vec3& worldPos, con
     return best;
 }
 
-MapEditor::ObsHitResult MapEditor::FindNearestObstacleVertex(const glm::vec3& worldPos, const CampaignMap& map, float maxDist) {
+MapEditor::ObsHitResult MapEditor::FindNearestObstacleVertex(const glm::vec2& mousePixel, const CampaignMap& map, float maxPx) {
     ObsHitResult best;
-    glm::vec2 click(worldPos.x, worldPos.z);
     auto& obs = map.GetObstacles();
     for (int oi = 0; oi < (int)obs.size(); oi++) {
         for (int vi = 0; vi < (int)obs[oi].vertices.size(); vi++) {
-            glm::vec2 vp(obs[oi].vertices[vi].x, obs[oi].vertices[vi].z);
-            float d = glm::distance(click, vp);
-            if (d < best.dist && d < maxDist) {
+            auto& v = obs[oi].vertices[vi];
+            float th = map.GetTerrainHeight(v.x, v.z);
+            glm::vec2 sp = WorldToScreen({ v.x, th + 0.2f, v.z });
+            float d = glm::distance(mousePixel, sp);
+            if (d < best.dist && d < maxPx) {
                 best = { oi, vi, d };
             }
         }
@@ -42,13 +65,15 @@ MapEditor::ObsHitResult MapEditor::FindNearestObstacleVertex(const glm::vec3& wo
     return best;
 }
 
-int MapEditor::FindNearestCity(const glm::vec3& worldPos, const CampaignMap& map, float maxDist) {
-    glm::vec2 click(worldPos.x, worldPos.z);
-    float bestD = maxDist;
+int MapEditor::FindNearestCity(const glm::vec2& mousePixel, const CampaignMap& map, float maxPx) {
+    float bestD = maxPx;
     int bestIdx = -1;
     auto& provs = map.GetProvinces();
     for (int i = 0; i < (int)provs.size(); i++) {
-        float d = glm::distance(click, glm::vec2(provs[i].cityPos.x, provs[i].cityPos.z));
+        auto& cp = provs[i].cityPos;
+        float th = map.GetTerrainHeight(cp.x, cp.z);
+        glm::vec2 sp = WorldToScreen({ cp.x, th + 0.2f, cp.z });
+        float d = glm::distance(mousePixel, sp);
         if (d < bestD) { bestD = d; bestIdx = i; }
     }
     return bestIdx;
@@ -62,41 +87,31 @@ void MapEditor::MoveSharedVertices(CampaignMap& map, glm::vec3 oldPos, glm::vec3
     float threshold = 0.01f;
     glm::vec2 old2d(oldPos.x, oldPos.z);
 
-    for (auto& p : map.GetProvincesEditable()) {
-        for (auto& v : p.borderVertices) {
-            if (glm::distance(glm::vec2(v.x, v.z), old2d) < threshold) {
-                v = newPos;
-            }
-        }
-    }
-    for (auto& ob : map.GetObstaclesEditable()) {
-        for (auto& v : ob.vertices) {
-            if (glm::distance(glm::vec2(v.x, v.z), old2d) < threshold) {
-                v = newPos;
-            }
-        }
-    }
-    for (auto& ft : map.GetForeignTerritoriesEditable()) {
-        for (auto& v : ft.vertices) {
-            if (glm::distance(glm::vec2(v.x, v.z), old2d) < threshold) {
-                v = newPos;
-            }
-        }
-    }
+    for (auto& p : map.GetProvincesEditable())
+        for (auto& v : p.borderVertices)
+            if (glm::distance(glm::vec2(v.x, v.z), old2d) < threshold) v = newPos;
+
+    for (auto& ob : map.GetObstaclesEditable())
+        for (auto& v : ob.vertices)
+            if (glm::distance(glm::vec2(v.x, v.z), old2d) < threshold) v = newPos;
+
+    for (auto& ft : map.GetForeignTerritoriesEditable())
+        for (auto& v : ft.vertices)
+            if (glm::distance(glm::vec2(v.x, v.z), old2d) < threshold) v = newPos;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MOUSE MOVE (hover feedback)
+// MOUSE MOVE (hover)
 // ═══════════════════════════════════════════════════════════════
 
-void MapEditor::HandleMouseMove(const glm::vec3& worldPos, const CampaignMap& map) {
+void MapEditor::HandleMouseMove(const glm::vec2& mousePixel, const CampaignMap& map) {
     if (!isActive || isDragging || isDraggingObstacle || isDraggingCity) return;
 
-    auto hit = FindNearestVertex(worldPos, map, 0.4f);
+    auto hit = FindNearestVertex(mousePixel, map, 18.0f);
     hoverProvinceIdx = hit.provIdx;
     hoverVertexIdx = hit.vertIdx;
 
-    auto obsHit = FindNearestObstacleVertex(worldPos, map, 0.4f);
+    auto obsHit = FindNearestObstacleVertex(mousePixel, map, 18.0f);
     hoverObstacleIdx = obsHit.obsIdx;
     hoverObsVertexIdx = obsHit.vertIdx;
 }
@@ -105,12 +120,12 @@ void MapEditor::HandleMouseMove(const glm::vec3& worldPos, const CampaignMap& ma
 // LEFT CLICK
 // ═══════════════════════════════════════════════════════════════
 
-void MapEditor::HandleLeftClick(const glm::vec3& worldPos, CampaignMap& map) {
+void MapEditor::HandleLeftClick(const glm::vec3& worldPos, const glm::vec2& mousePixel, CampaignMap& map) {
     if (!isActive) return;
 
-    // ── MOVE CITY tool ──
+    // ── MOVE CITY ──
     if (currentTool == Tool::MOVE_CITY) {
-        int cityIdx = FindNearestCity(worldPos, map, 0.5f);
+        int cityIdx = FindNearestCity(mousePixel, map, 22.0f);
         if (cityIdx >= 0) {
             draggingCityProvIdx = cityIdx;
             isDraggingCity = true;
@@ -119,12 +134,11 @@ void MapEditor::HandleLeftClick(const glm::vec3& worldPos, CampaignMap& map) {
         return;
     }
 
-    // ── ADD VERTEX tool ──
+    // ── ADD VERTEX ──
     if (currentTool == Tool::ADD_VERTEX && selectedProvinceIdx >= 0) {
         auto& provs = map.GetProvincesEditable();
         if (selectedProvinceIdx < (int)provs.size()) {
             Province& p = provs[selectedProvinceIdx];
-            // Find the edge closest to the click point, insert between those two vertices
             glm::vec2 click(worldPos.x, worldPos.z);
             float bestDist = 999;
             int bestEdge = -1;
@@ -132,9 +146,10 @@ void MapEditor::HandleLeftClick(const glm::vec3& worldPos, CampaignMap& map) {
             for (int i = 0; i < n; i++) {
                 glm::vec2 a(p.borderVertices[i].x, p.borderVertices[i].z);
                 glm::vec2 b(p.borderVertices[(i + 1) % n].x, p.borderVertices[(i + 1) % n].z);
-                // Distance from click to line segment
                 glm::vec2 ab = b - a;
-                float t = glm::clamp(glm::dot(click - a, ab) / glm::dot(ab, ab), 0.0f, 1.0f);
+                float len2 = glm::dot(ab, ab);
+                if (len2 < 0.0001f) continue;
+                float t = glm::clamp(glm::dot(click - a, ab) / len2, 0.0f, 1.0f);
                 glm::vec2 proj = a + t * ab;
                 float d = glm::distance(click, proj);
                 if (d < bestDist) { bestDist = d; bestEdge = i; }
@@ -144,7 +159,6 @@ void MapEditor::HandleLeftClick(const glm::vec3& worldPos, CampaignMap& map) {
                 glm::vec3(worldPos.x, 0, worldPos.z));
             selectedVertexIdx = insertAt;
 
-            // Recompute center
             glm::vec3 c(0);
             for (auto& v : p.borderVertices) c += v;
             p.center = c / (float)p.borderVertices.size();
@@ -156,13 +170,10 @@ void MapEditor::HandleLeftClick(const glm::vec3& worldPos, CampaignMap& map) {
         return;
     }
 
-    // ── SELECT / MOVE VERTEX tool ──
-    // Try province vertices first
-    auto hit = FindNearestVertex(worldPos, map, 0.4f);
-    // Also try obstacle vertices
-    auto obsHit = FindNearestObstacleVertex(worldPos, map, 0.4f);
+    // ── SELECT / MOVE VERTEX ──
+    auto hit = FindNearestVertex(mousePixel, map, 18.0f);
+    auto obsHit = FindNearestObstacleVertex(mousePixel, map, 18.0f);
 
-    // Pick whichever is closer
     if (hit.dist < obsHit.dist && hit.provIdx >= 0) {
         selectedProvinceIdx = hit.provIdx;
         selectedVertexIdx = hit.vertIdx;
@@ -182,10 +193,9 @@ void MapEditor::HandleLeftClick(const glm::vec3& worldPos, CampaignMap& map) {
         }
     }
     else {
-        // Click on empty space — try to select a province by clicking inside it
+        // Click inside a province?
         auto* prov = map.GetProvinceAtWorldPos(worldPos);
         if (prov) {
-            // Find this province's index
             auto& provs = map.GetProvinces();
             for (int i = 0; i < (int)provs.size(); i++) {
                 if (provs[i].id == prov->id) { selectedProvinceIdx = i; break; }
@@ -222,9 +232,8 @@ void MapEditor::HandleLeftRelease(CampaignMap& map) {
         ob.center = c / (float)ob.vertices.size();
         geometryDirty = true;
     }
-    if (isDraggingCity) {
-        geometryDirty = true;
-    }
+    if (isDraggingCity) geometryDirty = true;
+
     isDragging = false;
     isDraggingObstacle = false;
     isDraggingCity = false;
@@ -238,7 +247,6 @@ void MapEditor::HandleDrag(const glm::vec3& worldPos, CampaignMap& map) {
     if (!isActive) return;
     glm::vec3 newPos(worldPos.x, 0, worldPos.z);
 
-    // Province vertex drag
     if (isDragging && selectedProvinceIdx >= 0 && selectedVertexIdx >= 0) {
         auto& provs = map.GetProvincesEditable();
         if (selectedProvinceIdx < (int)provs.size()) {
@@ -250,7 +258,6 @@ void MapEditor::HandleDrag(const glm::vec3& worldPos, CampaignMap& map) {
         }
     }
 
-    // Obstacle vertex drag
     if (isDraggingObstacle && selectedObstacleIdx >= 0 && selectedObsVertexIdx >= 0) {
         auto& obs = map.GetObstaclesEditable();
         if (selectedObstacleIdx < (int)obs.size()) {
@@ -262,7 +269,6 @@ void MapEditor::HandleDrag(const glm::vec3& worldPos, CampaignMap& map) {
         }
     }
 
-    // City drag
     if (isDraggingCity && draggingCityProvIdx >= 0) {
         auto& provs = map.GetProvincesEditable();
         if (draggingCityProvIdx < (int)provs.size()) {
@@ -275,12 +281,11 @@ void MapEditor::HandleDrag(const glm::vec3& worldPos, CampaignMap& map) {
 // RIGHT CLICK
 // ═══════════════════════════════════════════════════════════════
 
-void MapEditor::HandleRightClick(const glm::vec3& worldPos, CampaignMap& map) {
+void MapEditor::HandleRightClick(const glm::vec3& worldPos, const glm::vec2& mousePixel, CampaignMap& map) {
     if (!isActive) return;
 
     if (currentTool == Tool::DELETE_VERTEX) {
-        // Try province vertex
-        auto hit = FindNearestVertex(worldPos, map, 0.4f);
+        auto hit = FindNearestVertex(mousePixel, map, 18.0f);
         if (hit.provIdx >= 0) {
             auto& provs = map.GetProvincesEditable();
             Province& p = provs[hit.provIdx];
@@ -295,8 +300,7 @@ void MapEditor::HandleRightClick(const glm::vec3& worldPos, CampaignMap& map) {
             }
             return;
         }
-        // Try obstacle vertex
-        auto obsHit = FindNearestObstacleVertex(worldPos, map, 0.4f);
+        auto obsHit = FindNearestObstacleVertex(mousePixel, map, 18.0f);
         if (obsHit.obsIdx >= 0) {
             auto& obs = map.GetObstaclesEditable();
             auto& ob = obs[obsHit.obsIdx];
@@ -326,33 +330,26 @@ void MapEditor::HandleKeyPress(int key, CampaignMap& map, Renderer& renderer) {
     if (key == GLFW_KEY_4) { currentTool = Tool::DELETE_VERTEX; Logger::Info("Editor: DELETE VERTEX"); }
     if (key == GLFW_KEY_5) { currentTool = Tool::MOVE_CITY; Logger::Info("Editor: MOVE CITY"); }
 
-    // Save
     if (key == GLFW_KEY_F5) {
         if (geometryDirty) RebuildGeometry(map, renderer);
         MapSerializer::SaveToFile(map, "maps/europe_1700.json");
     }
 
-    // Load
     if (key == GLFW_KEY_F8) {
         if (MapSerializer::LoadFromFile(map, "maps/europe_1700.json")) {
             RebuildGeometry(map, renderer);
-            selectedProvinceIdx = -1;
-            selectedVertexIdx = -1;
-            selectedObstacleIdx = -1;
-            selectedObsVertexIdx = -1;
+            selectedProvinceIdx = -1; selectedVertexIdx = -1;
+            selectedObstacleIdx = -1; selectedObsVertexIdx = -1;
         }
     }
 
-    // R = rebuild geometry
     if (key == GLFW_KEY_R) {
         RebuildGeometry(map, renderer);
-        geometryDirty = false;
         Logger::Info("Editor: Geometry rebuilt");
     }
 }
 
 void MapEditor::RebuildGeometry(CampaignMap& map, Renderer& renderer) {
-    // Recompute all centers
     for (auto& p : map.GetProvincesEditable()) {
         glm::vec3 c(0);
         for (auto& v : p.borderVertices) c += v;
@@ -399,7 +396,7 @@ std::string MapEditor::GetSelectionInfo(const CampaignMap& map) const {
     if (selectedObstacleIdx >= 0 && selectedObstacleIdx < (int)map.GetObstacles().size()) {
         auto& ob = map.GetObstacles()[selectedObstacleIdx];
         std::string info = ob.name + " [" + ob.type + "] (" + std::to_string(ob.vertices.size()) + " verts)";
-        if (selectedObsVertexIdx >= 0) {
+        if (selectedObsVertexIdx >= 0 && selectedObsVertexIdx < (int)ob.vertices.size()) {
             auto& v = ob.vertices[selectedObsVertexIdx];
             char buf[64];
             snprintf(buf, sizeof(buf), " V%d (%.1f, %.1f)", selectedObsVertexIdx, v.x, v.z);
@@ -408,10 +405,4 @@ std::string MapEditor::GetSelectionInfo(const CampaignMap& map) const {
         return info;
     }
     return "nothing";
-}
-
-int MapEditor::GetSelectedProvinceId(const CampaignMap& map) const {
-    if (selectedProvinceIdx >= 0 && selectedProvinceIdx < (int)map.GetProvinces().size())
-        return map.GetProvinces()[selectedProvinceIdx].id;
-    return -1;
 }

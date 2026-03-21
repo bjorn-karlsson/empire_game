@@ -172,7 +172,8 @@ void Renderer::BuildWaterPlane(){
     float s=40;std::vector<float>wv;int gs=40;float st=s*2.f/gs;
     for(int gz=0;gz<gs;gz++)for(int gx=0;gx<gs;gx++){
         float x0=-s+gx*st,z0=-s+gz*st,x1=x0+st,z1=z0+st;
-        wv.insert(wv.end(),{x0,-0.08f,z0,x1,-0.08f,z0,x1,-0.08f,z1,x0,-0.08f,z0,x1,-0.08f,z1,x0,-0.08f,z1});}
+        wv.insert(wv.end(), { x0,-0.18f,z0,x1,-0.18f,z0,x1,-0.18f,z1,x0,-0.18f,z0,x1,-0.18f,z1,x0,-0.18f,z1 });
+    }
     glGenVertexArrays(1,&m_waterVAO);glGenBuffers(1,&m_waterVBO);glBindVertexArray(m_waterVAO);
     glBindBuffer(GL_ARRAY_BUFFER,m_waterVBO);glBufferData(GL_ARRAY_BUFFER,wv.size()*sizeof(float),wv.data(),GL_STATIC_DRAW);
     glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);glEnableVertexAttribArray(0);glBindVertexArray(0);
@@ -575,13 +576,17 @@ void Renderer::RenderObstacles(const CampaignMap& map) {
         glDrawArrays(GL_TRIANGLES, 0, m_obstacleGPUs[i].vertexCount);
     }
 
-    // Rivers (flat, blue, more transparent, thinner look)
+    // Rivers — render ON TOP of terrain (no depth test)
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
     for (int i = 0; i < (int)obs.size() && i < (int)m_obstacleGPUs.size(); i++) {
-        if (obs[i].type != "river")continue;
-        m_overlayShader->SetVec4("u_Color", { 0.10f,0.25f,0.48f,0.70f });
+        if (obs[i].type != "river") continue;
+        m_overlayShader->SetVec4("u_Color", { 0.10f, 0.25f, 0.48f, 0.55f });
         glBindVertexArray(m_obstacleGPUs[i].VAO);
         glDrawArrays(GL_TRIANGLES, 0, m_obstacleGPUs[i].vertexCount);
     }
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
     glBindVertexArray(0);
 }
 // ── RenderBorders ─────────────────────────────────────────────

@@ -12,17 +12,16 @@ class MapEditor {
 public:
     bool isActive = false;
 
-    // Tools: simplified — vertex moving is always right-drag
-    enum class Tool { SELECT, ADD_VERTEX, MOVE_CITY };
+    enum class Tool { SELECT, ADD_VERTEX, MOVE_CITY, LINK_VERTEX, HEIGHT_BRUSH };
     Tool currentTool = Tool::SELECT;
 
-    // Selection
+    // Province/obstacle selection
     int selectedProvinceIdx = -1;
     int selectedVertexIdx = -1;
     int selectedObstacleIdx = -1;
     int selectedObsVertexIdx = -1;
 
-    // Dragging (right mouse button)
+    // Dragging (right mouse)
     bool isDragging = false;
     bool isDraggingCity = false;
     int draggingCityProvIdx = -1;
@@ -33,10 +32,22 @@ public:
     int hoverObstacleIdx = -1;
     int hoverObsVertexIdx = -1;
 
+    // Vertex linking state
+    int linkSourceProvIdx = -1;
+    int linkSourceVertIdx = -1;
+    int linkSourceObsIdx = -1;
+    int linkSourceObsVertIdx = -1;
+
+    // Height brush
+    float brushRadius = 0.8f;
+    float brushStrength = 0.015f;
+    enum class BrushMode { RAISE, LOWER, SMOOTH, FLATTEN };
+    BrushMode brushMode = BrushMode::RAISE;
+    bool isPainting = false;
+
     bool geometryDirty = false;
 
     void Toggle() { isActive = !isActive; }
-
     void SetScreenInfo(const glm::mat4& vpMatrix, float screenW, float screenH);
 
     // Input
@@ -46,6 +57,10 @@ public:
     void HandleRightRelease(CampaignMap& map);
     void HandleMouseMove(const glm::vec2& mousePixel, const CampaignMap& map);
     void HandleKeyPress(int key, bool ctrlHeld, CampaignMap& map, Renderer& renderer);
+
+    // Height brush
+    void PaintHeight(const glm::vec3& worldPos, CampaignMap& map, bool raise);
+    void HandleScrollInEditor(float scroll);
 
     void RebuildGeometry(CampaignMap& map, Renderer& renderer);
 
@@ -76,7 +91,7 @@ private:
     void MoveSharedVertices(CampaignMap& map, glm::vec3 oldPos, glm::vec3 newPos);
     void DeleteSelectedVertex(CampaignMap& map);
 
-    // Undo/redo snapshot
+    // Undo snapshots
     struct MapSnapshot {
         struct ProvSnap { std::vector<glm::vec3> verts; glm::vec3 cityPos; };
         struct ObsSnap { std::vector<glm::vec3> verts; };
@@ -84,12 +99,11 @@ private:
         std::vector<ProvSnap> provinces;
         std::vector<ObsSnap>  obstacles;
         std::vector<FtSnap>   foreigns;
+        std::vector<float>    heightData; // full height map snapshot
     };
-
     MapSnapshot CaptureSnapshot(const CampaignMap& map);
     void ApplySnapshot(const MapSnapshot& snap, CampaignMap& map);
-
     std::deque<MapSnapshot> m_undoStack;
     std::deque<MapSnapshot> m_redoStack;
-    static constexpr int MAX_UNDO = 50;
+    static constexpr int MAX_UNDO = 30;
 };

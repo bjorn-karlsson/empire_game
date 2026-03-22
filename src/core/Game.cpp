@@ -94,22 +94,28 @@ void Game::ProcessInput() {
 
     // Editor keys
     if (m_editor.isActive && m_state == GameState::CAMPAIGN_MAP) {
-        if (m_input->IsKeyPressed(GLFW_KEY_1)) m_editor.HandleKeyPress(GLFW_KEY_1, false, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_2)) m_editor.HandleKeyPress(GLFW_KEY_2, false, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_3)) m_editor.HandleKeyPress(GLFW_KEY_3, false, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_4)) m_editor.HandleKeyPress(GLFW_KEY_4, false, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_5)) m_editor.HandleKeyPress(GLFW_KEY_5, false, *m_campaignMap, *m_renderer);
-        if (m_input->IsKeyPressed(GLFW_KEY_DELETE)) m_editor.HandleKeyPress(GLFW_KEY_DELETE, false, *m_campaignMap, *m_renderer);
-        if (!ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_R)) m_editor.HandleKeyPress(GLFW_KEY_R, false, *m_campaignMap, *m_renderer);
-        if (!ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_Q)) m_editor.HandleKeyPress(GLFW_KEY_Q, false, *m_campaignMap, *m_renderer);
-        if (!ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_F)) m_editor.HandleKeyPress(GLFW_KEY_F, false, *m_campaignMap, *m_renderer);
-        if (!ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_G)) m_editor.HandleKeyPress(GLFW_KEY_G, false, *m_campaignMap, *m_renderer);
-        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_Z)) m_editor.HandleKeyPress(GLFW_KEY_Z, true, *m_campaignMap, *m_renderer);
-        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_Y)) m_editor.HandleKeyPress(GLFW_KEY_Y, true, *m_campaignMap, *m_renderer);
-        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_S)) m_editor.HandleKeyPress(GLFW_KEY_S, true, *m_campaignMap, *m_renderer);
-        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_L)) m_editor.HandleKeyPress(GLFW_KEY_L, true, *m_campaignMap, *m_renderer);
-        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_N)) m_editor.HandleKeyPress(GLFW_KEY_N, true, *m_campaignMap, *m_renderer);
-        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_DELETE)) m_editor.HandleKeyPress(GLFW_KEY_DELETE, true, *m_campaignMap, *m_renderer);
+        // Tool keys (no ctrl)
+        if (!ctrlHeld) {
+            if (m_input->IsKeyPressed(GLFW_KEY_1)) m_editor.HandleKeyPress(GLFW_KEY_1, false, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_2)) m_editor.HandleKeyPress(GLFW_KEY_2, false, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_3)) m_editor.HandleKeyPress(GLFW_KEY_3, false, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_4)) m_editor.HandleKeyPress(GLFW_KEY_4, false, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_5)) m_editor.HandleKeyPress(GLFW_KEY_5, false, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_DELETE)) m_editor.HandleKeyPress(GLFW_KEY_DELETE, false, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_R)) m_editor.HandleKeyPress(GLFW_KEY_R, false, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_Q)) m_editor.HandleKeyPress(GLFW_KEY_Q, false, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_F)) m_editor.HandleKeyPress(GLFW_KEY_F, false, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_G)) m_editor.HandleKeyPress(GLFW_KEY_G, false, *m_campaignMap, *m_renderer);
+        }
+        // Ctrl combos
+        if (ctrlHeld) {
+            if (m_input->IsKeyPressed(GLFW_KEY_Z)) m_editor.HandleKeyPress(GLFW_KEY_Z, true, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_Y)) m_editor.HandleKeyPress(GLFW_KEY_Y, true, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_S)) m_editor.HandleKeyPress(GLFW_KEY_S, true, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_L)) m_editor.HandleKeyPress(GLFW_KEY_L, true, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_N)) m_editor.HandleKeyPress(GLFW_KEY_N, true, *m_campaignMap, *m_renderer);
+            if (m_input->IsKeyPressed(GLFW_KEY_DELETE)) m_editor.HandleKeyPress(GLFW_KEY_DELETE, true, *m_campaignMap, *m_renderer);
+        }
     }
 
     if (m_state == GameState::CAMPAIGN_MAP) {
@@ -149,13 +155,15 @@ void Game::ProcessInput() {
             glm::vec2 mousePos = m_input->GetMousePos();
             glm::vec3 worldPos = cam->ScreenToWorldPlane(mousePos.x, mousePos.y, (float)m_windowWidth, (float)m_windowHeight);
 
+            // Always track mouse world pos for province creation at cursor
+            m_editor.mouseWorldPos = worldPos;
+
+
             // Height brush: scroll changes radius, not zoom
             if (m_editor.currentTool == MapEditor::Tool::HEIGHT_BRUSH && scroll != 0) {
                 m_editor.HandleScrollInEditor(scroll);
                 scroll = 0;
             }
-
-            // Apply remaining scroll as zoom
             if (scroll != 0) cam->Zoom(scroll);
 
             m_editor.HandleMouseMove(mousePos, *m_campaignMap);

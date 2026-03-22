@@ -80,6 +80,12 @@ void CampaignMap::CreateProvince(const std::string& name, const std::string& cit
     Logger::Info("Created province: %s (id=%d, owner=%s)", name.c_str(), p.id, owner.c_str());
 }
 
+void CampaignMap::DeleteObstacle(int obstacleIdx) {
+    if (obstacleIdx < 0 || obstacleIdx >= (int)m_obstacles.size()) return;
+    Logger::Info("Deleted obstacle: %s", m_obstacles[obstacleIdx].name.c_str());
+    m_obstacles.erase(m_obstacles.begin() + obstacleIdx);
+}
+
 void CampaignMap::DeleteProvince(int provinceIdx) {
     if (provinceIdx < 0 || provinceIdx >= (int)m_provinces.size()) return;
     Province& p = m_provinces[provinceIdx];

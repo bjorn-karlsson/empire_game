@@ -1628,30 +1628,51 @@ void Renderer::RenderEditorHUD(const std::string& toolName, const std::string& s
     glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST);
     float sw = (float)m_width, sh = (float)m_height;
 
-    // Top-left info panel
-    float panW = 400, panH = 130;
+    // ── Top-left: Editor info ──
+    float panW = 420, panH = 110;
     DrawScreenQuad(0, 0, panW, panH, { 0.08f, 0.06f, 0.12f, 0.92f });
     DrawScreenQuad(0, 0, 4, panH, { 0.9f, 0.7f, 0.2f, 1.0f });
     DrawScreenText("MAP EDITOR", 14, 6, 2.0f, { 1.0f, 0.9f, 0.4f, 1.0f });
-    DrawScreenText("Tool: " + toolName, 14, 28, 1.6f, { 0.85f, 0.85f, 0.75f, 0.95f });
-    DrawScreenText("Sel: " + selInfo, 14, 48, 1.4f, { 0.7f, 0.7f, 0.6f, 0.85f });
-    std::string stats = std::to_string(provinceCount) + " provinces, " + std::to_string(obstacleCount) + " obstacles";
-    DrawScreenText(stats, 14, 66, 1.2f, { 0.55f, 0.55f, 0.5f, 0.7f });
-    if (geometryDirty) DrawScreenText("* UNSAVED *", 14, 82, 1.2f, { 1.0f, 0.4f, 0.3f, 0.9f });
+    DrawScreenText("Tool: " + toolName, 14, 28, 1.5f, { 0.85f, 0.85f, 0.75f, 0.95f });
+    DrawScreenText("Sel: " + selInfo, 14, 46, 1.3f, { 0.7f, 0.7f, 0.6f, 0.85f });
+    std::string stats = std::to_string(provinceCount) + " provinces, "
+        + std::to_string(obstacleCount) + " obstacles";
+    DrawScreenText(stats, 14, 62, 1.1f, { 0.55f, 0.55f, 0.5f, 0.7f });
+    if (geometryDirty) DrawScreenText("* UNSAVED *", 14, 78, 1.1f, { 1.0f, 0.4f, 0.3f, 0.9f });
 
-    // Bottom-left keybind panel (wider)
-    float helpW = 520, helpH = 140;
+    // ── Bottom: FULL-WIDTH keybind panel ──
+    float helpH = 100;
     float helpY = sh - helpH;
-    DrawScreenQuad(0, helpY, helpW, helpH, { 0.08f, 0.06f, 0.12f, 0.88f });
-    DrawScreenQuad(0, helpY, 4, helpH, { 0.4f, 0.6f, 0.9f, 0.8f });
+    DrawScreenQuad(0, helpY, sw, helpH, { 0.06f, 0.05f, 0.10f, 0.90f });
+    DrawScreenQuad(0, helpY, sw, 2, { 0.4f, 0.5f, 0.7f, 0.6f }); // top accent line
 
-    float lx = 12, s = 1.3f;
-    DrawScreenText("Tools:  1:Select  2:AddVertex  3:LinkVertex  4:HeightBrush  5:MoveCity", lx, helpY + 6, s, { 0.8f, 0.85f, 0.95f, 0.95f });
-    DrawScreenText("Mouse:  LClick:Select  RightDrag:Move vertex  Del:Delete vertex", lx, helpY + 24, s, { 0.7f, 0.75f, 0.8f, 0.85f });
-    DrawScreenText("Brush:  LDrag:Raise  RDrag:Lower  Scroll:Size  Q/G/F:Mode", lx, helpY + 42, s, { 0.7f, 0.75f, 0.8f, 0.85f });
-    DrawScreenText("Province: Ctrl+N:New  Ctrl+Del:Delete province", lx, helpY + 60, s, { 0.7f, 0.75f, 0.8f, 0.85f });
-    DrawScreenText("File:  Ctrl+S:Save  Ctrl+L:Load  Ctrl+Z/Y:Undo/Redo  R:Rebuild", lx, helpY + 78, s, { 0.65f, 0.7f, 0.75f, 0.8f });
-    DrawScreenText("Nav:  WASD/Arrows:Pan  Scroll:Zoom  MiddleMouse:Pan  E:Exit editor", lx, helpY + 96, s, { 0.55f, 0.6f, 0.65f, 0.7f });
+    float col1 = 14, col2 = sw * 0.35f, col3 = sw * 0.68f;
+    float row1 = helpY + 8, row2 = helpY + 24, row3 = helpY + 40, row4 = helpY + 56, row5 = helpY + 72;
+    float s = 1.2f;
+    glm::vec4 cBright = { 0.85f, 0.88f, 0.95f, 0.95f };
+    glm::vec4 cMedium = { 0.65f, 0.70f, 0.78f, 0.85f };
+    glm::vec4 cDim = { 0.50f, 0.55f, 0.60f, 0.70f };
+
+    // Column 1 — Tools
+    DrawScreenText("-- TOOLS --", col1, row1, s, cBright);
+    DrawScreenText("1: Select", col1, row2, s, cMedium);
+    DrawScreenText("2: Add Vertex", col1, row3, s, cMedium);
+    DrawScreenText("3: Link Vertex", col1, row4, s, cMedium);
+    DrawScreenText("4: Height Brush   5: Move City", col1, row5, s, cMedium);
+
+    // Column 2 — Actions
+    DrawScreenText("-- ACTIONS --", col2, row1, s, cBright);
+    DrawScreenText("LClick: Select   RDrag: Move vertex", col2, row2, s, cMedium);
+    DrawScreenText("Del: Delete vertex", col2, row3, s, cMedium);
+    DrawScreenText("Ctrl+N: New province at cursor", col2, row4, s, cMedium);
+    DrawScreenText("Ctrl+Del: Delete province/obstacle", col2, row5, s, cMedium);
+
+    // Column 3 — Brush + File
+    DrawScreenText("-- BRUSH / FILE --", col3, row1, s, cBright);
+    DrawScreenText("Brush: LDrag=Raise RDrag=Lower Scroll=Size", col3, row2, s, cMedium);
+    DrawScreenText("Q: Raise   G: Smooth   F: Flatten", col3, row3, s, cMedium);
+    DrawScreenText("Ctrl+S: Save   Ctrl+L: Load   R: Rebuild", col3, row4, s, cMedium);
+    DrawScreenText("Ctrl+Z/Y: Undo/Redo   E: Exit editor", col3, row5, s, cDim);
 
     glEnable(GL_DEPTH_TEST); glEnable(GL_STENCIL_TEST);
 }

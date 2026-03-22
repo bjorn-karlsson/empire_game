@@ -27,6 +27,9 @@ public:
     BrushMode brushMode = BrushMode::RAISE;
     bool isPainting = false, geometryDirty = false;
 
+    // Current mouse world position (updated every frame from Game.cpp)
+    glm::vec3 mouseWorldPos = glm::vec3(0);
+
     void Toggle() { isActive = !isActive; }
     void SetScreenInfo(const glm::mat4& vp, float sw, float sh);
     void HandleLeftClick(const glm::vec3& wp, const glm::vec2& mp, CampaignMap& map);

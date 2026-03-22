@@ -161,7 +161,7 @@ public:
     std::vector<Army*> GetArmiesInProvince(int);
 
     void BuildNavGrid();
-
+    void DeleteObstacle(int obstacleIdx);
 
     HeightMap& GetHeightMap() { return m_heightMap; }
     const HeightMap& GetHeightMap() const { return m_heightMap; }

@@ -8,8 +8,11 @@
 
 class CampaignMap;class BattleScene;class Camera;class Shader;
 
+struct Province; struct TerrainObstacle;
+
 struct ProvinceGPU{unsigned int VAO=0,VBO=0;int vertexCount=0;unsigned int borderVAO=0,borderVBO=0;int borderVertexCount=0;};
 struct ObstacleGPU{unsigned int VAO=0,VBO=0;int vertexCount=0;};
+
 
 class Renderer{
 public:

@@ -108,6 +108,8 @@ void Game::ProcessInput() {
         if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_Y)) m_editor.HandleKeyPress(GLFW_KEY_Y, true, *m_campaignMap, *m_renderer);
         if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_S)) m_editor.HandleKeyPress(GLFW_KEY_S, true, *m_campaignMap, *m_renderer);
         if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_L)) m_editor.HandleKeyPress(GLFW_KEY_L, true, *m_campaignMap, *m_renderer);
+        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_N)) m_editor.HandleKeyPress(GLFW_KEY_N, true, *m_campaignMap, *m_renderer);
+        if (ctrlHeld && m_input->IsKeyPressed(GLFW_KEY_DELETE)) m_editor.HandleKeyPress(GLFW_KEY_DELETE, true, *m_campaignMap, *m_renderer);
     }
 
     if (m_state == GameState::CAMPAIGN_MAP) {
